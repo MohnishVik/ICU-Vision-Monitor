@@ -16,9 +16,9 @@ class Measurement:
     Silently guessing a wrong value is the only real failure mode.
     """
     value: Optional[float]      # None = unavailable; never imputed as normal
-    sqi: float                  # Signal Quality Index 0.0–1.0
+    sqi: float                  # Signal Quality Index 0.0-1.0
     ts: float                   # Unix timestamp of window end
-    source: str                 # e.g. "rr.depth", "hr.efficientphys", "fall.geometry"
+    source: str                 # e.g. "rr.depth", "hr.pos", "fall.geometry"
     latency_ms: float           # wall-clock processing time for this estimate
     meta: dict = field(default_factory=dict)  # module-specific extras
 
@@ -27,13 +27,17 @@ class Measurement:
 class FrameBundle:
     """
     One synchronised tick of all camera streams.
-    thermal may be None if ESP32 is offline — all consumers must handle this.
+    thermal may be None if the ESP32 is offline or its newest frame is too old;
+    every consumer must handle this.
     """
     rgb: np.ndarray             # (H=480, W=640, 3) uint8
-    depth: np.ndarray           # (H=480, W=640)   uint16, aligned to RGB space
-    ir: Optional[np.ndarray]    # (H=480, W=848)   uint8,  IR left stream
-    ts_mono: float
-    thermal_ts: Optional[float] = None   # when the thermal frame was received (lets the RR thermal path skip repeats)
+    depth: np.ndarray           # (H=480, W=640)   uint16, aligned to the RGB grid
+    ir: Optional[np.ndarray]    # (H=480, W=848)   uint8,  IR left stream (unused for now)
+    thermal: Optional[np.ndarray]  # (62, 80) float32 degrees C; None if unavailable
+    ts_mono: float              # monotonic clock timestamp (seconds) of the D435 frame
+    thermal_ts: Optional[float] = None  # monotonic time the thermal frame was RECEIVED.
+    #   Thermal updates ~8 times a second but bundles come at 30 per second, so the same
+    #   thermal frame appears in several bundles. The thermal RR path uses this to skip repeats.
 
 
 @dataclass
@@ -52,7 +56,7 @@ class ROIBundle:
 
     # Geometric features (from plane_ransac + chair OBB)
     h_centroid: float           # height of body centroid above floor in metres
-    in_chair_frac: float        # 0.0–1.0 fraction of person 3D cloud inside chair OBB
+    in_chair_frac: float        # 0.0-1.0 fraction of person 3D cloud inside chair OBB
 
     # Scene context
     staff_count: int            # people detected in zone besides the patient
