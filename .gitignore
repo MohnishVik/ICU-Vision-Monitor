@@ -1,0 +1,35 @@
+# Model weights (too large for git — use git-lfs or manual placement)
+models/public/*.pth
+models/public/*.pt
+models/public/*.joblib
+models/finetuned/*.pth
+models/finetuned/*.pt
+models/finetuned/*.joblib
+models/onnx/*.onnx
+
+# Data (never committed — stays on Google Drive)
+data/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+*.egg-info/
+
+# Frontend build
+frontend/node_modules/
+frontend/dist/
+
+# Jupyter
+.ipynb_checkpoints/
+notebooks/.ipynb_checkpoints/
+
+# IDE
+.vscode/
+.idea/
+
+# Logs
+*.log
+mlruns/

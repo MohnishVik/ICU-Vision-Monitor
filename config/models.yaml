@@ -1,0 +1,51 @@
+# Model checkpoint paths — all relative to project root
+# Runtime prefers finetuned weights; falls back to public if file absent
+
+checkpoints:
+  rr:
+    public:    "models/public/rr_tcn_lbrdic.pth"
+    finetuned: "models/finetuned/rr_tcn_finetuned.pth"
+    onnx:      "models/onnx/rr_tcn.onnx"
+  hr:
+    public:    "models/public/hr_efficientphys_ubfc.pth"
+    finetuned: "models/finetuned/hr_efficientphys_finetuned.pth"
+    onnx:      "models/onnx/hr_efficientphys.onnx"
+  fall:
+    public:    "models/public/fall_model_public.pt"
+    finetuned: "models/finetuned/fall_model_finetuned.pt"
+  pain:
+    xgboost:   "models/public/pain_xgboost_synpain.joblib"
+    deepmlp:   "models/finetuned/pain_deepmlp_synpain.pth"
+    tcn:       "models/finetuned/pain_temporal_tcn.pth"   # PENDING — absent = auto-skip
+    onnx:      "models/onnx/pain_deepmlp.onnx"
+  pose:
+    yolo_pose: "models/public/yolo11n-pose.pt"            # pretrained, never retrained
+
+# Module feature toggles
+modules:
+  rr:
+    use_optical_flow: true
+    use_depth: true
+    use_thermal: true          # inference only; skipped cleanly if ESP32 offline
+    use_tcn: true
+    tcn_input_channels: 2      # [optical_flow, depth] — thermal NOT a trained channel
+    agreement_gate_bpm: 4.0
+  hr:
+    use_pos: true              # always on — safety net, no weights
+    use_efficientphys: true
+    roi_window_frames: 150
+    roi_crop_size: 72
+  fall:
+    use_geometry: true         # depth rules — always on, no weights needed
+    use_pose: true
+    use_classifier: true
+    dwell_s: 1.5
+    staff_suppress: true
+  pain:
+    use_mediapipe_fallback: true   # active until OpenFace installed
+    use_openface: false
+    inference_priority: ["tcn", "deepmlp", "xgboost"]  # use best available
+
+# Inference device
+device: "cuda"      # "cuda" on Jetson, "cpu" for laptop dev
+use_onnx: false     # set true on Jetson after running scripts/export_to_onnx.py

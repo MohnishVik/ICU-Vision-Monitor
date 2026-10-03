@@ -1,0 +1,33 @@
+# Core ML
+torch>=2.1.0
+torchvision>=0.16.0
+numpy>=1.24.0
+scipy>=1.11.0
+
+# Computer vision
+opencv-python>=4.8.0
+mediapipe>=0.10.0
+ultralytics>=8.1.0        # YOLO11 + ByteTrack
+
+# Depth / RealSense
+pyrealsense2>=2.54.0      # install separately on Jetson (build from source)
+
+# ML models
+lightgbm>=4.1.0
+xgboost>=2.0.0
+scikit-learn>=1.3.0
+joblib>=1.3.0
+
+# API / serving
+fastapi>=0.109.0
+uvicorn[standard]>=0.27.0
+websockets>=12.0
+python-multipart>=0.0.6
+
+# Data
+h5py>=3.10.0
+pyyaml>=6.0.1
+
+# ONNX (CPU dev) — use onnxruntime-gpu on Jetson
+onnxruntime>=1.17.0
+onnx>=1.15.0
