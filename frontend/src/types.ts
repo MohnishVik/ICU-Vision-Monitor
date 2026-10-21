@@ -1,26 +1,213 @@
-// types.ts — TypeScript mirror of src/types.py Measurement contract
+// types.ts — TypeScript mirror of the server contract (src/types.py + src/serving/state.py)
+//
+// The one rule the UI must keep: `value: null` means "cannot measure right now",
+// and `stale: true` means "no fresh value for > 5 s". Neither is ever shown as
+// a live normal reading.
 
 export interface Measurement {
   value: number | null;    // null = "cannot measure right now"
   sqi: number;             // Signal Quality Index 0.0–1.0
   ts: number;              // Unix timestamp
-  source: string;          // e.g. "rr.fused", "hr.efficientphys"
+  source: string;          // e.g. "rr.depth", "hr.pos"
   latency_ms: number;
   meta: Record<string, unknown>;
 }
 
-export type PatientState = "IN_CHAIR" | "SITTING_EDGE" | "OUT_OF_CHAIR" | "ON_FLOOR";
-export type LightingState = "bright" | "dim" | "dark";
-export type EWSLevel = "green" | "amber" | "red";
+export type PatientState = 'IN_CHAIR' | 'SITTING_EDGE' | 'OUT_OF_CHAIR' | 'ON_FLOOR' | 'UNKNOWN';
+export type LightingState = 'bright' | 'dim' | 'dark' | 'unknown';
+export type EWSLevel = 'green' | 'amber' | 'red' | 'unknown';
+export type EngineStatus =
+  | 'starting' | 'running' | 'awaiting_calibration' | 'camera_offline' | 'error';
+export type ModuleState = 'ok' | 'degraded' | 'unavailable' | 'error' | 'pending';
+export type VitalKey = 'hr' | 'rr';
 
-export interface PatientVitals {
-  patient_id: string;
-  hr: Measurement;
-  rr: Measurement;
-  fall_state: PatientState;
-  pain: Measurement;
-  ews_score: number;
-  ews_level: EWSLevel;
-  taa_flag: boolean;
-  last_updated: number;
+export interface Vital {
+  value: number | null;       // Kalman-smoothed, null when stale or unmeasurable
+  raw: number | null;         // fused, pre-smoothing
+  sqi: number;
+  stale: boolean;
+  age_s: number | null;
+  unit: string;
+  reason: string | null;      // why value is null: no_valid_input | paths_disagree | warming_up
+  subscore: number | null;    // NEWS2 sub-score
+  sources: Record<string, Measurement | null>;
+  apnea?: boolean;
 }
+
+export interface EWS {
+  total: number | null;
+  level: EWSLevel;
+  subscores: Record<string, number | null>;
+  missing: string[];
+  action: string;
+  action_text: string;
+  partial: boolean;
+  explanation: string;
+}
+
+export interface FallInfo {
+  state: number | null;
+  state_name: 'NORMAL' | 'FALLING' | 'LYING_DOWN' | 'UNKNOWN';
+  patient_state: PatientState;
+  sqi: number;
+  stale: boolean;
+  ml_probability: number | null;
+  provisional: boolean;
+  last_confirmed: number | null;
+}
+
+export interface TAAInfo {
+  flag: boolean;
+  phase_rad: number | null;
+  sustain_s: number | null;
+  sqi: number;
+  stale: boolean;
+  reason: string | null;
+}
+
+export interface Scene {
+  has_patient: boolean;
+  in_chair_frac: number;
+  staff_count: number;
+  lighting: LightingState;
+  h_centroid: number;
+  thermal_online: boolean;
+  calibrated: boolean;
+  image_size: [number, number] | null;      // [h, w]
+  keypoints: [number, number][] | null;
+  keypoints_conf: number[] | null;
+  person_bbox: [number, number, number, number] | null;
+  others: [number, number, number, number][];
+  chair: [number, number][] | null;
+  redaction: 'faces' | 'unavailable' | 'disabled';
+}
+
+export type AlarmKind = 'ews' | 'fall' | 'apnea' | 'taa';
+export interface Alarm {
+  id: number;
+  kind: AlarmKind;
+  severity: 'amber' | 'red';
+  title: string;
+  message: string;
+  state: 'pending' | 'active' | 'acknowledged' | 'cleared';
+  first_seen: number;
+  active_since: number | null;
+  last_seen: number;
+  stage: number;
+  action: 'log_only' | 'dashboard_highlight' | 'chime' | 'phone_push' | string;
+  suppressed: boolean;
+  acked_at: number | null;
+  cleared_at: number | null;
+}
+
+export interface TrendStats {
+  window_s: number;
+  n: number;
+  mean: number | null;
+  std: number | null;
+  slope_per_min: number | null;
+  first: number | null;
+  last: number | null;
+  span_s: number;
+}
+
+export interface ModuleStatus {
+  ok: boolean;
+  state: ModuleState;
+  detail: string;
+  errors: number;
+}
+
+export interface PatientSnapshot {
+  patient_id: string;
+  label: string;
+  mode: 'camera' | 'demo';
+  simulated: boolean;
+  ts: number;
+  status: EngineStatus;
+  status_detail: string;
+  vitals: Record<VitalKey, Vital> | null;
+  ews: EWS | null;
+  fall: FallInfo | null;
+  taa: TAAInfo | null;
+  pain: { available: boolean; reason?: string };
+  scene: Scene;
+  alarms: Alarm[];
+  alarm_history: Alarm[];
+  trends: Record<VitalKey, Record<string, TrendStats>> | null;
+  modules: Record<string, ModuleStatus>;
+  metrics: { fps?: number; latency_ms?: number; uptime_s?: number; actionable_alerts_shift?: number };
+  version: number;
+}
+
+export interface VitalSummary {
+  value: number | null;
+  stale: boolean;
+  sqi: number;
+  subscore: number | null;
+  reason: string | null;
+}
+
+export interface PatientSummary {
+  patient_id: string;
+  label: string;
+  mode: 'camera' | 'demo';
+  simulated: boolean;
+  status: EngineStatus;
+  status_detail: string;
+  ts: number;
+  version: number;
+  rr: VitalSummary;
+  hr: VitalSummary;
+  apnea: boolean;
+  ews: { total: number | null; level: EWSLevel; explanation: string; partial: boolean };
+  fall: { state_name: string | null; patient_state: PatientState | null };
+  taa_flag: boolean;
+  scene: {
+    has_patient: boolean | null; staff_count: number | null; thermal_online: boolean | null;
+    calibrated: boolean | null; lighting: LightingState | null;
+  };
+  alarm_count: number;
+  top_alarm: Alarm | null;
+}
+
+export interface History {
+  patient_id: string;
+  minutes: number;
+  t: number[];
+  rr: (number | null)[];
+  hr: (number | null)[];
+  rr_sqi: (number | null)[];
+  hr_sqi: (number | null)[];
+  ews: (number | null)[];
+  fall: (number | null)[];
+  taa: (boolean | null)[];
+}
+
+export interface Health {
+  status: 'ok' | 'degraded';
+  version: string;
+  mode: 'camera' | 'demo';
+  uptime_s: number;
+  server_time: number;
+  patients: {
+    patient_id: string;
+    status: EngineStatus;
+    status_detail: string;
+    modules: Record<string, ModuleStatus>;
+    stale: Record<string, boolean>;
+    metrics: PatientSnapshot['metrics'];
+  }[];
+}
+
+export interface CalibrationStatus {
+  calibrated: boolean;
+  corners: [number, number][] | null;
+  seat_depth_m: number | null;
+  label: 'chair' | 'bed' | null;
+  image_size: [number, number] | null;
+  has_saved: boolean;
+}
+
+// Backward-compatible alias for the original scaffold name.
+export type PatientVitals = PatientSnapshot;

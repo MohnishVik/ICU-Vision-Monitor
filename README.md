@@ -20,10 +20,39 @@ from video alone — no contact sensors attached to the patient.
 ## Quick Start
 ```bash
 pip install -r requirements.txt
+cd frontend && npm ci && npm run build && cd ..   # build the web dashboard once
 # Place weight files in models/public/ and models/finetuned/ (see README files there)
-python scripts/eval_weights.py   # sanity-check all weights
-python main.py                   # start monitor + dashboard
+python main.py                   # start monitor + dashboard -> http://127.0.0.1:8000
 ```
+
+No camera or weights yet? `python main.py --demo` runs four **simulated** beds (stable,
+deteriorating, fall, breathing problems), clearly labelled as simulated in the UI. The
+simulated measurements still go through the real fusion, early-warning and alarm code.
+
+| Command | What it does |
+|---|---|
+| `python main.py` | D435 camera mode. Open the dashboard and click the 4 chair corners to start. |
+| `python main.py --demo` | Simulated ward, no hardware needed. |
+| `python main.py --reuse-calibration` | Skip the click if this bed was calibrated before. |
+| `python main.py --host 0.0.0.0` | Reachable from a nurse-station PC on the same network. |
+| `python main.py --hud` | Legacy OpenCV window (`scripts/run_monitor.py`). |
+| `cd frontend && npm run dev` | Live UI development on :5173 (proxies to the server on :8000). |
+
+## Web dashboard
+- **Ward view:** one tile per bed, quiet when stable and loud only on deviation. Fixed bed order.
+- **Bed view:** live face-blurred video with pose/chair overlay, HR and RR with signal quality,
+  early-warning sub-score with a plain-language explanation ("RR 16→26 over 40 min"),
+  alarms with acknowledge, 5 min to 4 h trends against NEWS2 bands, falls, breathing
+  synchrony, and which sensor path produced each number.
+- **Chair setup** happens in the browser: click the four seat corners on a still frame.
+- **Alarms** escalate log → dashboard → chime → phone (config/ews_rules.yaml), are held back
+  while staff are at the bedside, and falls stay up until acknowledged.
+- **Honesty rules:** a vital that cannot be measured shows "—" with the reason; a reading older
+  than 5 s is marked stale; missing hardware or weights switch only that module off (see /system).
+- **Privacy:** faces are blurred in the stream, nothing is recorded by default
+  (`privacy.allow_debug_capture` in config/signal.yaml enables de-identified fall snapshots).
+
+Tests: `pip install -r requirements-dev.txt && pytest` (52 tests: EWS scoring, fusion, alarms, API).
 
 ## Development Sequence
 1. `src/types.py` — shared contracts (done — scaffold in place)

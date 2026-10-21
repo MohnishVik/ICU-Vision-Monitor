@@ -38,3 +38,8 @@ Obsidian/
 *.asar
 *.exe
 *.pak
+
+# Per-session chair calibrations (machine-specific) and de-identified alarm snapshots.
+# Snapshots are face-blurred but still patient imagery: never commit them.
+config/sessions/*.json
+debug_captures/

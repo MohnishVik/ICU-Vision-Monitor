@@ -49,3 +49,4 @@ waveshare_thermal:
 sync:
   tolerance_ms: 33             # max allowed timestamp gap between streams
   ring_buffer_size: 64         # frames held per stream in ring buffer
+  thermal_max_age_ms: 250      # newest thermal frame is attached only if <= this old (2 thermal frames)

@@ -40,7 +40,10 @@ class SyncBuffer:
         """
         self.d435_cfg    = camera_cfg["d435"]
         self.thermal_cfg = camera_cfg["waveshare_thermal"]
-        self.max_thermal_age_s = camera_cfg["sync"]["thermal_max_age_ms"] / 1000.0
+        # 250 ms = two thermal frames. .get() so an older camera.yaml without this key
+        # still starts instead of raising KeyError.
+        sync_cfg = camera_cfg.get("sync") or {}
+        self.max_thermal_age_s = float(sync_cfg.get("thermal_max_age_ms", 250)) / 1000.0
 
         self._d435    = D435Stream(self.d435_cfg)
         self._thermal = ThermalStream(self.thermal_cfg) \
