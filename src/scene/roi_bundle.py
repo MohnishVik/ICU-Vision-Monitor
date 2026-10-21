@@ -47,6 +47,9 @@ import numpy as np
 
 from ..types import FrameBundle, ROIBundle
 from .person_tracker import PatientTrack
+from .thermal_registration import (
+    RoiStabilizer, ThermalRegistration, nostril_box_rgb, thermal_roi_from_rgb_box,
+)
 
 try:
     import cv2  # type: ignore
@@ -117,9 +120,13 @@ class ROIBuilder:
         self,
         patient_id: str = "patient",
         config: Optional[ROIGeometryConfig] = None,
+        thermal_reg: Optional[ThermalRegistration] = None,
     ) -> None:
         self.patient_id = patient_id
         self.cfg = config or ROIGeometryConfig()
+        # thermal<->RGB alignment; when set, RR reads temperature at the nostrils
+        self.thermal_reg = thermal_reg
+        self._troi_stab = RoiStabilizer()
 
     # -- region geometry --------------------------------------------------- #
     def _face_box(self, kpts, confs, bbox, w, h):
@@ -215,6 +222,11 @@ class ROIBuilder:
             (_L_HIP, _R_HIP), self.cfg.chest_x_pad, self.cfg.chest_frac, w, h)
         # abdomen: between the chest's lower edge and the hips
         abd_box = self._abdomen_box(kpts, confs, bbox, chest_box, w, h)
+        # nostril/mouth box in RGB, and the matching thermal pixels when aligned
+        nostril = nostril_box_rgb(kpts, confs, self.cfg.conf_min)
+        thermal_roi = self._troi_stab.update(
+            thermal_roi_from_rgb_box(self.thermal_reg, nostril)
+            if (self.thermal_reg is not None and nostril is not None) else None)
 
         return ROIBundle(
             face_roi=self._crop(rgb, face_box, w, h),
@@ -232,6 +244,8 @@ class ROIBuilder:
             pose_keypoints=kpts,
             pose_keypoints_conf=confs,
             person_bbox=bbox,
+            nostril_box=nostril,
+            thermal_roi=thermal_roi,
         )
 
     def _abdomen_box(self, kpts, confs, bbox, chest_box, w, h):

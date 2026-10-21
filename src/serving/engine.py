@@ -36,8 +36,15 @@ from typing import Any, Dict, List, Optional
 import numpy as np
 
 from src.fusion import load_rules
+from collections import OrderedDict, deque
+import uuid
+
 from src.scene import ChairCalibration, load_chair_calibration, load_privacy_guard
 from src.scene.pose import PosePerson
+from src.scene.thermal_registration import (
+    THERMAL_SHAPE, RoiStabilizer, ThermalRegistration, load_thermal_registration, mean_in_roi,
+    nostril_box_rgb, registration_path, thermal_roi_from_rgb_box, warmest_patch_c,
+)
 from src.serving.state import SceneInfo, VitalsPipeline, to_jsonable
 from src.types import FrameBundle, Measurement
 
@@ -113,6 +120,17 @@ class PatientSource:
         self._last_encode = 0.0
         self.stream_clients = 0
         self._chair: Optional[ChairCalibration] = None
+        # thermal (ESP32): latest frame, breathing ROI, breath-temperature trace, alignment
+        self.thermal_reg: Optional[ThermalRegistration] = load_thermal_registration(
+            self.config_dir, patient_id)
+        self._persist_thermal_reg = True
+        self._thermal_lock = threading.Lock()
+        self._thermal: Optional[np.ndarray] = None
+        self._thermal_wall = 0.0
+        self._thermal_roi: Optional[tuple] = None
+        self._thermal_roi_src = "warmest_patch"
+        self._breath: deque = deque(maxlen=600)
+        self._snapshots: "OrderedDict[str, dict]" = OrderedDict()
 
     # lifecycle
     def start(self) -> None:
@@ -185,6 +203,141 @@ class PatientSource:
     def clear_calibration(self) -> dict:
         raise NotImplementedError
 
+    # ------------------------------------------------------------------ thermal --
+    THERMAL_ONLINE_S = 3.0
+    TRACE_S = 30.0
+
+    def _publish_thermal(self, frame: np.ndarray, roi: Optional[tuple], now: float) -> None:
+        """Store the newest thermal frame and extend the breath-temperature trace.
+        The trace restarts when its source changes (nostril <-> warmest spot), the same
+        rule RR follows, so the plotted waveform is always one consistent signal."""
+        temp = mean_in_roi(frame, roi) if roi is not None else None
+        src = "nostril" if temp is not None else "warmest_patch"
+        if temp is None:
+            temp = warmest_patch_c(frame)
+        with self._thermal_lock:
+            self._thermal, self._thermal_wall = frame, now
+            self._thermal_roi = roi if src == "nostril" else None
+            if src != self._thermal_roi_src:
+                self._breath.clear()
+            self._thermal_roi_src = src
+            if temp is not None:
+                self._breath.append((now, float(temp)))
+
+    def _latest_thermal(self) -> tuple[Optional[np.ndarray], float]:
+        with self._thermal_lock:
+            return self._thermal, self._thermal_wall
+
+    def thermal_online(self) -> bool:
+        _, wall = self._latest_thermal()
+        return wall > 0 and (time.time() - wall) < self.THERMAL_ONLINE_S
+
+    @staticmethod
+    def _thermal_grid(frame: np.ndarray) -> dict:
+        h, w = frame.shape[:2]
+        return {"w": int(w), "h": int(h), "min": float(np.min(frame)), "max": float(np.max(frame)),
+                "data": np.round(frame * 100).astype(np.int32).ravel().tolist()}  # centi-degC
+
+    def thermal_payload(self) -> dict:
+        with self._thermal_lock:
+            frame, wall, roi = self._thermal, self._thermal_wall, self._thermal_roi
+            src = self._thermal_roi_src
+            trace = [(t, c) for (t, c) in self._breath if t >= time.time() - self.TRACE_S]
+        online = wall > 0 and (time.time() - wall) < self.THERMAL_ONLINE_S
+        base = {"online": online, "ts": wall or None, "roi": list(roi) if roi else None,
+                "roi_source": src, "registration": self.thermal_registration_status(),
+                "trace": {"t": [t for t, _ in trace], "c": [round(c, 3) for _, c in trace]}}
+        if frame is None or not online:
+            return to_jsonable(base)
+        return to_jsonable({**base, **self._thermal_grid(frame)})
+
+    def thermal_registration_status(self) -> dict:
+        r = self.thermal_reg
+        return to_jsonable({
+            "registered": r is not None,
+            "source": r.source if r else None,
+            "error_px": r.error_px if r else None,
+            "n_pairs": r.n_pairs if r else 0,
+            "quality": r.quality if r else None,
+            "ts": r.ts if r else None,
+            "pairs": r.pairs if r else [],
+        })
+
+    def _install_thermal_reg(self, reg: Optional[ThermalRegistration]) -> None:
+        self.thermal_reg = reg
+
+    def _rgb_view(self) -> Optional[np.ndarray]:
+        """Latest colour frame as BGR, privacy-safe (faces blurred). Overridden."""
+        return None
+
+    def set_thermal_registration(self, pairs: list) -> dict:
+        frame, _ = self._latest_thermal()
+        rgb = self._rgb_view()
+        th_shape = tuple(frame.shape[:2]) if frame is not None else THERMAL_SHAPE
+        rgb_shape = tuple(rgb.shape[:2]) if rgb is not None else (480, 640)
+        reg = ThermalRegistration.fit(pairs, thermal_shape=th_shape, rgb_shape=rgb_shape)
+        if self._persist_thermal_reg:
+            reg.save(registration_path(self.config_dir, self.patient_id))
+        else:
+            reg.source = "demo"
+        self._install_thermal_reg(reg)
+        return self.thermal_registration_status()
+
+    def clear_thermal_registration(self) -> dict:
+        if self._persist_thermal_reg:
+            p = registration_path(self.config_dir, self.patient_id)
+            if p.exists():
+                p.unlink()
+            # a fixed matrix in camera.yaml (if any) becomes the fallback again
+            self._install_thermal_reg(load_thermal_registration(self.config_dir, self.patient_id))
+        else:
+            self._install_thermal_reg(None)
+        return self.thermal_registration_status()
+
+    def thermal_snapshot(self) -> dict:
+        """Freeze one colour frame + the thermal frame from the same moment, so the
+        operator clicks matching points on images that show the same instant."""
+        frame, wall = self._latest_thermal()
+        rgb = self._rgb_view()
+        if rgb is None:
+            raise RuntimeError("No colour frame yet - wait for the video to appear.")
+        if frame is None or (time.time() - wall) > self.THERMAL_ONLINE_S:
+            raise RuntimeError("The thermal camera is offline - check the ESP32 Wi-Fi connection.")
+        jpeg = _encode_jpeg(rgb, 85)
+        if jpeg is None:
+            raise RuntimeError("Could not encode the colour frame.")
+        sid = uuid.uuid4().hex[:12]
+        with self._thermal_lock:          # API requests may run concurrently
+            self._snapshots[sid] = {"rgb": jpeg, "thermal": frame.copy(), "ts": time.time()}
+            while len(self._snapshots) > 12:
+                self._snapshots.popitem(last=False)
+        return to_jsonable({"snapshot_id": sid, "rgb_size": list(rgb.shape[:2]),
+                            "thermal": self._thermal_grid(frame)})
+
+    def snapshot_rgb(self, sid: str) -> Optional[bytes]:
+        with self._thermal_lock:
+            snap = self._snapshots.get(sid)
+        return snap["rgb"] if snap else None
+
+    def thermal_overlay_jpeg(self) -> Optional[bytes]:
+        """Colour frame with the thermal image warped on top: the alignment check."""
+        if cv2 is None or self.thermal_reg is None:
+            return None
+        frame, _ = self._latest_thermal()
+        rgb = self._rgb_view()
+        if frame is None or rgb is None:
+            return None
+        lo, hi = np.percentile(frame, 2), np.percentile(frame, 98)
+        norm = np.clip((frame - lo) / max(1e-6, hi - lo) * 255, 0, 255).astype(np.uint8)
+        colour = cv2.applyColorMap(norm, cv2.COLORMAP_INFERNO)
+        h, w = rgb.shape[:2]
+        warped = cv2.warpPerspective(colour, self.thermal_reg.H, (w, h), flags=cv2.INTER_LINEAR)
+        mask = cv2.warpPerspective(np.full(frame.shape[:2], 255, np.uint8), self.thermal_reg.H, (w, h))
+        out = rgb.copy()
+        sel = mask > 0
+        out[sel] = (0.45 * rgb[sel] + 0.55 * warped[sel]).astype(np.uint8)
+        return _encode_jpeg(out, 82)
+
 
 # =========================================================================== #
 # Real camera
@@ -213,7 +366,7 @@ class CameraEngine(PatientSource):
         self._lat_ema = 0.0
         self._last_tick = 0.0
         self._last_fall_save = 0.0
-        self._thermal_online = False
+        self._last_thermal_ts_seen: Optional[float] = None
 
     # -------------------------------------------------------------- modules --
     def _set_mod(self, name: str, state: str, detail: str = "") -> None:
@@ -280,8 +433,23 @@ class CameraEngine(PatientSource):
         tracker = load_person_tracker(chair, signal_yaml, image_size=chair.image_size
                                       if chair.image_size != (0, 0) else None)
         roi_builder = load_roi_builder(signal_yaml, patient_id=self.patient_id)
+        roi_builder.thermal_reg = self.thermal_reg
         # single assignment each; the frame loop reads all three at the top of a tick
         self._tracker, self._roi_builder, self._chair = tracker, roi_builder, chair
+
+    def _install_thermal_reg(self, reg: Optional[ThermalRegistration]) -> None:
+        self.thermal_reg = reg
+        rb = self._roi_builder
+        if rb is not None:
+            rb.thermal_reg = reg
+
+    def _rgb_view(self) -> Optional[np.ndarray]:
+        with self._frame_lock:
+            b = self._last_bundle
+        if b is None:
+            return None
+        people = self._last_people
+        return self.guard.deidentify_many(b.rgb, people) if people else b.rgb.copy()
 
     def set_calibration(self, corners: Any, label: str = "chair") -> dict:
         with self._frame_lock:
@@ -403,21 +571,25 @@ class CameraEngine(PatientSource):
             self._last_bundle = b
         h, w = rgb.shape[:2]
         now = time.time()
-        if now - self._last_tick > 2.0 and self._buf is not None:
-            try:
-                self._thermal_online = bool(self._buf.thermal_online())
-            except Exception:  # noqa: BLE001
-                self._thermal_online = False
+        new_thermal = thermal is not None and b.thermal_ts is not None \
+            and b.thermal_ts != self._last_thermal_ts_seen
+        if new_thermal:
+            self._last_thermal_ts_seen = b.thermal_ts
         people = self._infer_pose(rgb)
         self._last_people = people
         redaction = ("disabled" if not self.stream_video
                      else ("faces" if self._pose is not None else "unavailable"))
 
         chair, tracker, roi_builder = self._chair, self._tracker, self._roi_builder
+        reg = self.thermal_reg
         if chair is None or tracker is None or roi_builder is None:
+            if new_thermal:
+                self._publish_thermal(thermal, None, now)     # no pose ROI yet: warmest spot
             self.pipeline.scene = SceneInfo(calibrated=False, image_size=[h, w],
-                                            thermal_online=self._thermal_online, redaction=redaction,
-                                            others=[p.bbox.tolist() for p in people])
+                                            thermal_online=self.thermal_online(), redaction=redaction,
+                                            others=[p.bbox.tolist() for p in people],
+                                            thermal_registered=reg is not None,
+                                            thermal_quality=reg.quality if reg else None)
             if self.pipeline.status != "awaiting_calibration":
                 self.pipeline.touch_status("awaiting_calibration",
                                            "Click the four chair corners on the live frame.")
@@ -444,17 +616,22 @@ class CameraEngine(PatientSource):
                     log.exception("Module %s error #%d: %s", name, st["errors"], exc)
                 self._set_mod(name, "error", f"{type(exc).__name__}: {exc}")
 
+        if new_thermal:
+            self._publish_thermal(thermal, roi.thermal_roi, now)
         person = track.person
         scene = SceneInfo(
             has_patient=person is not None, in_chair_frac=float(track.in_chair_frac),
             staff_count=int(track.staff_count), lighting=str(roi.lighting),
-            h_centroid=float(track.h_centroid), thermal_online=self._thermal_online, calibrated=True,
+            h_centroid=float(track.h_centroid), thermal_online=self.thermal_online(), calibrated=True,
             image_size=[h, w],
             keypoints=person.keypoints.tolist() if person is not None else None,
             keypoints_conf=person.keypoints_conf.tolist() if person is not None else None,
             person_bbox=person.bbox.tolist() if person is not None else None,
             others=[p.bbox.tolist() for p in people if p is not person],
             chair=chair.corners.tolist(), redaction=redaction,
+            nostril_box=list(roi.nostril_box) if roi.nostril_box else None,
+            thermal_roi=list(roi.thermal_roi) if roi.thermal_roi else None,
+            thermal_registered=reg is not None, thermal_quality=reg.quality if reg else None,
         )
 
         fall = raw.get("fall.classifier")
@@ -508,6 +685,14 @@ _LYING = np.array([
     [318, 404], [318, 436], [390, 402], [392, 438], [460, 404], [462, 436],
 ], dtype=np.float32)
 _DEMO_CHAIR = [[226, 212], [414, 212], [436, 404], [204, 404]]
+# demo rig geometry: thermal (80x62) sees RGB x 40..600, y 20..460 (thermal -> RGB)
+_H_DEMO = np.array([[7.0, 0.0, 40.0], [0.0, 7.1, 20.0], [0.0, 0.0, 1.0]])
+_H_DEMO_INV = np.linalg.inv(_H_DEMO)
+
+
+def _apply_h(H: np.ndarray, pts: np.ndarray) -> np.ndarray:
+    p = np.c_[pts, np.ones(len(pts))] @ H.T
+    return p[:, :2] / p[:, 2:3]
 _SKELETON = ((5, 7), (7, 9), (6, 8), (8, 10), (5, 6), (5, 11), (6, 12), (11, 12),
              (11, 13), (13, 15), (12, 14), (14, 16), (0, 5), (0, 6))
 
@@ -524,8 +709,23 @@ class DemoEngine(PatientSource):
         self.t0 = time.time() - time_offset_s
         self._chair = ChairCalibration.from_corners(_DEMO_CHAIR, image_size=(480, 640), label="chair")
         self._last_emit = 0.0
+        self._last_tick = 0.0
+        self._phase = 0.0
         self._fall_emitted_cycle = -1
         self._sustain = 0.0
+        self._nrng = np.random.default_rng(seed)
+        self._last_rgb: Optional[np.ndarray] = None
+        self._troi_stab = RoiStabilizer()               # same ROI hysteresis as ROIBuilder
+        self.jitter_px = 0.6                            # keypoint wobble (RGB px)
+        # a demo bed never reads or writes real alignment files; its alignment is fitted
+        # by the real code from simulated clicks (with click noise) on the known rig geometry
+        self._persist_thermal_reg = False
+        th_pts = np.array([[8, 6], [72, 7], [74, 56], [9, 54], [40, 30], [24, 44]], np.float64)
+        rgb_pts = _apply_h(_H_DEMO, th_pts) + self._nrng.normal(0, 1.2, th_pts.shape)
+        reg = ThermalRegistration.fit([{"rgb": list(r), "thermal": list(t)}
+                                       for r, t in zip(rgb_pts, th_pts)])
+        reg.source = "demo"
+        self.thermal_reg = reg
         for name in ("pose", "rr", "hr", "fall", "taa"):
             self.pipeline.modules[name] = {"ok": True, "state": "ok", "detail": "simulated",
                                            "errors": 0}
@@ -548,6 +748,50 @@ class DemoEngine(PatientSource):
 
     def calibration_frame(self) -> Optional[bytes]:
         return self._render(_SEATED, 0.0, 0.0)
+
+    def _rgb_view(self) -> Optional[np.ndarray]:
+        if self._last_rgb is not None:
+            return self._last_rgb.copy()
+        return self._render_array(_SEATED, 0.0)
+
+    def _synth_thermal(self, pose: np.ndarray, phase: float, breathing: bool,
+                       others: List[list]) -> Optional[np.ndarray]:
+        """Plausible 62x80 thermal frame (degC) from the simulated pose, drawn at 4x and
+        area-downsampled like real optics: warm face, warmest inner eyes, clothing cooler
+        than skin, and nostrils that cool on inhale and warm on exhale."""
+        if cv2 is None:
+            return None
+        S = 4
+        th_h, th_w = THERMAL_SHAPE
+        canvas = np.full((th_h * S, th_w * S), 23.0, np.float32)
+        canvas += np.linspace(0.6, -0.3, th_h * S, dtype=np.float32)[:, None]
+
+        def P(pts) -> np.ndarray:                         # RGB px -> canvas px (ground truth rig)
+            return _apply_h(_H_DEMO_INV, np.asarray(pts, np.float64).reshape(-1, 2)) * S
+
+        def ip(p) -> tuple:
+            return int(round(p[0])), int(round(p[1]))
+
+        for bx in others:
+            q = P([[bx[0], bx[1]], [bx[2], bx[1]], [bx[2], bx[3]], [bx[0], bx[3]]]).astype(np.int32)
+            cv2.fillConvexPoly(canvas, q, 29.8)
+            head = P([[(bx[0] + bx[2]) / 2, bx[1] + 22]])[0]
+            cv2.circle(canvas, ip(head), int(2.8 * S), 33.4, -1, cv2.LINE_AA)
+        k = P(pose)
+        cv2.fillConvexPoly(canvas, k[[5, 6, 12, 11]].astype(np.int32), 31.0)
+        for a, b in _SKELETON:
+            cv2.line(canvas, ip(k[a]), ip(k[b]), 30.4, int(2.2 * S), cv2.LINE_AA)
+        cv2.circle(canvas, ip(k[0]), int(3.2 * S), 34.0, -1, cv2.LINE_AA)
+        for i in (1, 2):
+            cv2.circle(canvas, ip(k[i]), int(0.7 * S), 35.2, -1, cv2.LINE_AA)
+        box = nostril_box_rgb(pose, np.full(17, 0.9, np.float32))
+        if box is not None:
+            amp = 1.4 if breathing else 0.0
+            c = P([[(box[0] + box[2]) / 2, (box[1] + box[3]) / 2]])[0]
+            cv2.circle(canvas, ip(c), int(0.9 * S), 33.0 + amp * math.sin(phase), -1, cv2.LINE_AA)
+        small = cv2.resize(canvas, (th_w, th_h), interpolation=cv2.INTER_AREA)
+        small = cv2.GaussianBlur(small, (3, 3), 0.6)
+        return (small + self._nrng.normal(0, 0.04, small.shape)).astype(np.float32)
 
     # ---------------------------------------------------------- simulation --
     def _truth(self, t: float) -> dict:
@@ -620,7 +864,8 @@ class DemoEngine(PatientSource):
                                                    "peak_power_frac": s["rr_sqi"]})
                     if s["thermal"]:
                         raw["rr.thermal"] = Measurement(s["rr"] + self.rng.gauss(0, 0.7), 0.55, now,
-                                                        "rr.thermal", 2.2, {"fs_hz": 8.0})
+                                                        "rr.thermal", 2.2,
+                                                        {"fs_hz": 8.0, "roi": self._thermal_roi_src})
                 raw["hr.pos"] = (Measurement(s["hr"], s["hr_sqi"], now, "hr.pos", 4.6, {"fs_hz": 30.0})
                                  if s["hr_ok"] else
                                  Measurement(None, 0.12, now, "hr.pos", 4.6,
@@ -635,31 +880,62 @@ class DemoEngine(PatientSource):
                  "ml_probability": 0.94 if s["fall"] else 0.03, "provisional_active": s["fall"] == 1,
                  "confirmed_fall": ({"time": now, "confidence": 0.94} if s["confirm"] else None)})
 
-            breath = 1.6 * math.sin(2 * math.pi * (s["rr"] / 60.0) * t)
-            pose = s["pose"].copy()
-            pose[5:7, 1] += breath
-            jitter = np.array([[self.rng.gauss(0, 0.6), self.rng.gauss(0, 0.6)] for _ in range(17)])
-            pose = pose + jitter
+            # breathing phase is INTEGRATED (phase += 2*pi*f*dt). Using sin(2*pi*f*t) with a
+            # rate that varies tick to tick would jump the phase by f-noise * t radians and
+            # turn the waveform into noise once t is large.
+            dt = (now - self._last_tick) if self._last_tick else 0.1
+            self._last_tick = now
+            if not s["apnea"]:
+                self._phase = (self._phase + 2 * math.pi * (s["rr"] / 60.0) * min(dt, 0.5)) % (2 * math.pi)
+            breath = 1.6 * math.sin(self._phase)
+            true_pose = s["pose"].copy()                  # where the body really is
+            true_pose[5:7, 1] += breath
+            # detector noise: the face stays put, only the keypoint ESTIMATE wobbles. The
+            # thermal scene is drawn from true_pose; tracking/ROIs use the noisy pose.
+            jitter = np.array([[self.rng.gauss(0, self.jitter_px), self.rng.gauss(0, self.jitter_px)]
+                               for _ in range(17)])
+            pose = true_pose + jitter
             x1, y1 = pose.min(axis=0) - 12
             x2, y2 = pose.max(axis=0) + 12
             others = [[470.0, 120.0, 560.0, 450.0]] if s["staff"] >= 1 else []
             if s["staff"] >= 2:
                 others.append([60.0, 130.0, 150.0, 455.0])
+
+            # thermal: same ROI code path as the real camera (nostril box -> thermal pixels)
+            reg = self.thermal_reg
+            nbox = nostril_box_rgb(pose, np.full(17, 0.9, np.float32))
+            t_roi = self._troi_stab.update(
+                thermal_roi_from_rgb_box(reg, nbox) if (reg is not None and nbox) else None)
+            if s["thermal"]:
+                frame = self._synth_thermal(true_pose, self._phase, breathing=not s["apnea"], others=others)
+                if frame is not None:
+                    self._publish_thermal(frame, t_roi, now)
+
             scene = SceneInfo(
                 has_patient=True, in_chair_frac=s["in_chair"], staff_count=s["staff"],
                 lighting=s["lighting"], h_centroid=float(pose[5:13, 1].mean() / 480.0),
-                thermal_online=s["thermal"], calibrated=True, image_size=[480, 640],
+                thermal_online=self.thermal_online(), calibrated=True, image_size=[480, 640],
                 keypoints=pose.tolist(), keypoints_conf=[0.9] * 17,
                 person_bbox=[float(x1), float(y1), float(x2), float(y2)], others=others,
-                chair=self._chair.corners.tolist(), redaction="faces")
+                chair=self._chair.corners.tolist(), redaction="faces",
+                nostril_box=list(nbox) if nbox else None,
+                thermal_roi=list(t_roi) if t_roi else None,
+                thermal_registered=reg is not None, thermal_quality=reg.quality if reg else None)
             self.pipeline.metrics = {"fps": round(29.6 + self.rng.gauss(0, 0.3), 1),
                                      "latency_ms": round(38 + self.rng.gauss(0, 3), 1)}
             self.pipeline.step(now, raw, scene)
             if self._want_frame(now):
-                self._publish_jpeg(self._render(pose, s["staff"], t))
+                img = self._render_array(pose, s["staff"])
+                if img is not None:
+                    self._last_rgb = img
+                    self._publish_jpeg(_encode_jpeg(img, 70))
             self._stop.wait(0.1)
 
     def _render(self, pose: np.ndarray, staff: float, t: float) -> Optional[bytes]:
+        img = self._render_array(pose, staff)
+        return _encode_jpeg(img, 70) if img is not None else None
+
+    def _render_array(self, pose: np.ndarray, staff: float) -> Optional[np.ndarray]:
         """Schematic placeholder frame (no person imagery) so overlays have a backdrop."""
         if cv2 is None:
             return None
@@ -677,7 +953,7 @@ class DemoEngine(PatientSource):
             cv2.rectangle(img, (480, 140), (550, 440), (40, 34, 30), -1)
         cv2.putText(img, "SIMULATED FEED - NO CAMERA", (16, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.55,
                     (120, 110, 100), 1, cv2.LINE_AA)
-        return _encode_jpeg(img, 70)
+        return img
 
 
 # =========================================================================== #
