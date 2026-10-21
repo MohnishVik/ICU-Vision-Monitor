@@ -450,7 +450,13 @@ def _load_gru(primary: Path, fallback: Path, device: torch.device) -> Tuple[Fall
     """Load primary weights; fall back if missing. Returns (model, info)."""
     for path, tag in ((primary, "primary"), (fallback, "fallback")):
         if path.exists():
-            ck = torch.load(path, map_location=device)
+            try:
+                ck = torch.load(path, map_location=device)
+            except Exception:
+                # torch >= 2.6 defaults to weights_only=True, which rejects checkpoints that
+                # carry non-tensor objects (numpy scalars, config objects). These are our own
+                # locally trained weights, so loading the full pickle is acceptable here.
+                ck = torch.load(path, map_location=device, weights_only=False)
             cfg = ck.get("model_config", {})
             model = FallGRUClassifier(
                 input_size=cfg.get("input_size", 62),

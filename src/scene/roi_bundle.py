@@ -187,7 +187,7 @@ class ROIBuilder:
             return "dark"
         if m < self.cfg.dim_below:
             return "dim"
-        return "normal"
+        return "bright"   # matches src/types.py + frontend LightingState
 
     # -- main -------------------------------------------------------------- #
     def build(self, bundle: FrameBundle, track: PatientTrack) -> ROIBundle:
