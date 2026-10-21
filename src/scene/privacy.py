@@ -148,6 +148,22 @@ class PrivacyGuard:
             self._blur_region(out, box)
         return out
 
+    def deidentify_many(self, frame: np.ndarray, people: list) -> np.ndarray:
+        """Blur the face of EVERY detected person (patient and staff) in one copy.
+
+        Used for the live dashboard stream. `people` is a list of PosePerson.
+        A person whose face keypoints are missing gets the head region of their
+        bbox blurred instead. Never mutates the input frame.
+        """
+        if not self.p.blur_faces or not people:
+            return frame
+        out = frame.copy()
+        for person in people:
+            box = self._face_box(out.shape[:2], person.keypoints, person.keypoints_conf, person.bbox)
+            if box is not None:
+                self._blur_region(out, box)
+        return out
+
     # -- sanctioned write -------------------------------------------------- #
     def save_frame(
         self,
