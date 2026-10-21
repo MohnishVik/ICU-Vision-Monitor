@@ -69,6 +69,17 @@ export default function StreamPanel({ snap }: { snap: PatientSnapshot }) {
                       fontFamily="Barlow Semi Condensed">Staff</text>
               </g>
             ))}
+            {scene?.thermal_registered && scene?.nostril_box && (
+              <g>
+                <rect x={scene.nostril_box[0]} y={scene.nostril_box[1]}
+                      width={scene.nostril_box[2] - scene.nostril_box[0]}
+                      height={scene.nostril_box[3] - scene.nostril_box[1]} rx={3}
+                      fill="rgba(194,174,255,.12)" stroke="var(--rr)" strokeWidth={2}
+                      vectorEffect="non-scaling-stroke" />
+                <text x={scene.nostril_box[2] + 6} y={scene.nostril_box[3]} fill="var(--rr)" fontSize={13}
+                      fontFamily="Barlow Semi Condensed">Breathing</text>
+              </g>
+            )}
             {kp && (
               <g stroke="var(--ink)" strokeWidth={2.5} strokeLinecap="round" vectorEffect="non-scaling-stroke">
                 {BONES.filter(([a, b]) => ok(a) && ok(b)).map(([a, b]) => (

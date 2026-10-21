@@ -100,6 +100,10 @@ class SceneInfo:
     others: List[list] = field(default_factory=list)  # bboxes of non-patient people
     chair: Optional[list] = None                    # 4 x [x, y]
     redaction: str = "faces"                        # faces | unavailable | off
+    nostril_box: Optional[list] = None              # [x0, y0, x1, y1] RGB px (breathing region)
+    thermal_roi: Optional[list] = None              # [x0, y0, x1, y1] thermal px
+    thermal_registered: bool = False
+    thermal_quality: Optional[str] = None           # good | fair | poor | unchecked
 
 
 def patient_state(scene: SceneInfo, fall_state: Optional[int]) -> str:
