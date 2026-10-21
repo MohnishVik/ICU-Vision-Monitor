@@ -19,7 +19,7 @@ checkpoints:
     tcn:       "models/finetuned/pain_temporal_tcn.pth"   # PENDING — absent = auto-skip
     onnx:      "models/onnx/pain_deepmlp.onnx"
   pose:
-    yolo_pose: "models/public/yolo11n-pose.pt"            # pretrained, never retrained
+    yolo_pose: "models/public/yolov8n-pose.pt"            # pretrained, never retrained
 
 # Module feature toggles
 modules:
