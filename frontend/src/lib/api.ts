@@ -1,5 +1,8 @@
 // api.ts — typed client for the FastAPI server (src/serving/api.py)
-import type { CalibrationStatus, Health, History, PatientSnapshot, PatientSummary } from '../types';
+import type {
+  CalibrationStatus, Health, History, PatientSnapshot, PatientSummary, PointPair, ThermalPayload,
+  ThermalRegistrationStatus, ThermalSnapshot,
+} from '../types';
 
 export class ApiError extends Error {
   constructor(public status: number, message: string) {
@@ -53,12 +56,27 @@ export const api = {
     request<CalibrationStatus>(`/api/patients/${enc(id)}/calibration/reuse`, { method: 'POST' }),
   clearCalibration: (id: string) =>
     request<CalibrationStatus>(`/api/patients/${enc(id)}/calibration`, { method: 'DELETE' }),
+
+  thermal: (id: string) => request<ThermalPayload>(`/api/patients/${enc(id)}/thermal`),
+  thermalRegistration: (id: string) =>
+    request<ThermalRegistrationStatus>(`/api/patients/${enc(id)}/thermal/registration`),
+  setThermalRegistration: (id: string, pairs: PointPair[]) =>
+    request<ThermalRegistrationStatus>(`/api/patients/${enc(id)}/thermal/registration`, {
+      method: 'POST',
+      body: JSON.stringify({ pairs }),
+    }),
+  clearThermalRegistration: (id: string) =>
+    request<ThermalRegistrationStatus>(`/api/patients/${enc(id)}/thermal/registration`, { method: 'DELETE' }),
+  thermalSnapshot: (id: string) =>
+    request<ThermalSnapshot>(`/api/patients/${enc(id)}/thermal/snapshot`, { method: 'POST' }),
 };
 
 export const urls = {
   stream: (id: string) => `/api/patients/${enc(id)}/stream.mjpg`,
   frame: (id: string) => `/api/patients/${enc(id)}/frame.jpg`,
   calibrationFrame: (id: string) => `/api/patients/${enc(id)}/calibration/frame`,
+  snapshotRgb: (id: string, sid: string) => `/api/patients/${enc(id)}/thermal/snapshot/${enc(sid)}/rgb.jpg`,
+  thermalOverlay: (id: string) => `/api/patients/${enc(id)}/thermal/overlay.jpg`,
   ws: (path: string) => {
     const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     return `${proto}//${window.location.host}${path}`;

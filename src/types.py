@@ -67,3 +67,6 @@ class ROIBundle:
     pose_keypoints: Optional[np.ndarray] = None       # (17, 2) pixel coords
     pose_keypoints_conf: Optional[np.ndarray] = None  # (17,) confidences 0-1
     person_bbox: Optional[np.ndarray] = None          # [x1, y1, x2, y2]
+    # Thermal breathing ROI (scene layer; needs thermal<->RGB registration)
+    nostril_box: Optional[tuple] = None               # (x0, y0, x1, y1) RGB px below the nose
+    thermal_roi: Optional[tuple] = None               # (x0, y0, x1, y1) thermal px, end-exclusive

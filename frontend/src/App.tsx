@@ -6,6 +6,7 @@ import Calibrate from './pages/Calibrate';
 import Dashboard from './pages/Dashboard';
 import PatientDetail from './pages/PatientDetail';
 import System from './pages/System';
+import ThermalAlign from './pages/ThermalAlign';
 
 /** A render error in one view must never blank the whole monitor. */
 class ErrorBoundary extends Component<{ children: ReactNode }, { error: Error | null }> {
@@ -42,6 +43,7 @@ export default function App() {
               <Route path="/" element={<Dashboard />} />
               <Route path="/patients/:id" element={<PatientDetail />} />
               <Route path="/patients/:id/calibrate" element={<Calibrate />} />
+              <Route path="/patients/:id/thermal" element={<ThermalAlign />} />
               <Route path="/system" element={<System />} />
               <Route path="*" element={<NotFound />} />
             </Routes>

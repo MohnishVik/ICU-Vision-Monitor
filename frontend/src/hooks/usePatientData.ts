@@ -1,7 +1,7 @@
 // usePatientData.ts — REST polling for /history, /health and /calibration
 import { useCallback, useEffect, useState } from 'react';
 import { api } from '../lib/api';
-import type { CalibrationStatus, Health, History } from '../types';
+import type { CalibrationStatus, Health, History, ThermalPayload } from '../types';
 
 function usePoll<T>(fetcher: (() => Promise<T>) | null, everyMs: number, deps: unknown[]) {
   const [data, setData] = useState<T | null>(null);
@@ -12,14 +12,19 @@ function usePoll<T>(fetcher: (() => Promise<T>) | null, everyMs: number, deps: u
   useEffect(() => {
     if (!fetcher) return;
     let alive = true;
-    const run = () =>
+    let busy = false;                 // never stack requests on a slow network
+    const run = () => {
+      if (busy) return;
+      busy = true;
       fetcher()
         .then((d) => {
           if (!alive) return;
           setData(d);
           setError(null);
         })
-        .catch((e: Error) => alive && setError(e.message));
+        .catch((e: Error) => alive && setError(e.message))
+        .finally(() => { busy = false; });
+    };
     void run();
     const h = window.setInterval(run, everyMs);
     return () => {
@@ -39,6 +44,11 @@ export function usePatientHistory(id: string | undefined, minutes: number) {
 
 export function useHealth(everyMs = 5000) {
   return usePoll<Health>(() => api.health(), everyMs, []);
+}
+
+/** Thermal grid + breath trace at ~4 Hz (the ESP32 delivers ~8 frames/s). */
+export function useThermal(id: string | undefined, everyMs = 250) {
+  return usePoll<ThermalPayload>(id ? () => api.thermal(id) : null, everyMs, [id]);
 }
 
 export function useCalibration(id: string | undefined) {

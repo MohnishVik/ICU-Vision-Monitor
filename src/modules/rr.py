@@ -137,6 +137,13 @@ class _Path:
         self.sig.append(float(value))
         self.ts.append(float(ts))
 
+    def reset(self) -> None:
+        """Drop the buffer, e.g. when the signal source changes (two different
+        signals spliced into one window would corrupt the spectrum)."""
+        self.sig.clear()
+        self.ts.clear()
+        self.last_estimate_ts = 0.0
+
     def ready(self, now: float) -> bool:
         """True when enough signal exists and the update interval has elapsed."""
         if len(self.sig) < 4:
@@ -318,6 +325,7 @@ class RRModule:
         self._thermal = _Path(cfg=cfg.thermal, fs_nominal=thermal_fs, source="rr.thermal")
         self._apnea_state = _ApneaState()
         self._last_thermal_ts: Optional[float] = None
+        self._thermal_src: Optional[str] = None     # "nostril" | "warmest_patch"
 
     # ---- per-tick entry point ------------------------------------------------
 
@@ -325,7 +333,7 @@ class RRModule:
         """Append samples, then compute each path on its own schedule."""
         now = bundle.ts_mono
         self._sample_depth(bundle, roi, now)
-        self._sample_thermal(bundle, now)
+        self._sample_thermal(bundle, roi, now)
 
         out: dict[str, Measurement] = {}
         if self._depth.ready(now):
@@ -356,16 +364,31 @@ class RRModule:
             # One-sample hold prevents the buffer from going stale during a brief dropout
             self._depth.append(self._depth.sig[-1], now)
 
-    def _sample_thermal(self, bundle: FrameBundle, now: float) -> None:
+    def _sample_thermal(self, bundle: FrameBundle, roi: Optional[ROIBundle], now: float) -> None:
         if bundle.thermal is None or bundle.thermal_ts is None:
             return
         if bundle.thermal_ts == self._last_thermal_ts:
             return                                    # same frame as the previous tick
         self._last_thermal_ts = bundle.thermal_ts
 
-        temp = _nostril_mean_c(bundle.thermal)
-        if temp is not None:
-            self._thermal.append(temp, bundle.thermal_ts)
+        # Prefer the nostril ROI (needs thermal<->RGB registration + a visible nose);
+        # otherwise fall back to the warmest patch.
+        temp, src = None, "warmest_patch"
+        t_roi = getattr(roi, "thermal_roi", None) if roi is not None else None
+        if t_roi is not None:
+            x0, y0, x1, y1 = (int(v) for v in t_roi)
+            patch = bundle.thermal[y0:y1, x0:x1]
+            if patch.size > 0 and np.isfinite(patch).all():
+                temp, src = float(np.mean(patch)), "nostril"
+        if temp is None:
+            temp = _nostril_mean_c(bundle.thermal)
+        if temp is None:
+            return
+        if src != self._thermal_src:
+            if self._thermal_src is not None:
+                self._thermal.reset()                 # never splice two different signals
+            self._thermal_src = src
+        self._thermal.append(temp, bundle.thermal_ts)
 
     # ---- estimation ----------------------------------------------------------
 
@@ -407,6 +430,8 @@ class RRModule:
         if with_apnea:
             meta["apnea"] = bool(apnea_now)
             meta["apnea_duration_s"] = round(apnea_dur, 2)
+        if source == "rr.thermal":
+            meta["roi"] = self._thermal_src or "warmest_patch"
 
         return Measurement(
             value=value,
