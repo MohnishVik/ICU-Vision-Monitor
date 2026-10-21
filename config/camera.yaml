@@ -1,0 +1,51 @@
+# Intel RealSense D435
+# CRITICAL: auto_exposure and auto_white_balance must stay OFF
+# Changing exposure/WB values invalidates trained HR/RR weights
+
+d435:
+  rgb:
+    width: 640
+    height: 480
+    fps: 30                    # confirmed from test_realsense_standalone.py
+    format: bgr8
+  depth:
+    width: 424
+    height: 240
+    fps: 30                    # matched to RGB fps for frame-pair sync
+    format: z16
+  ir_left:
+    width: 848
+    height: 480
+    fps: 90
+  locked_exposure: 156         # NEVER change — baked into HR/RR weight training
+  locked_white_balance: 4600   # NEVER change — baked into HR/RR weight training
+  auto_exposure: false
+  auto_white_balance: false
+  mount_distance_m: 1.6        # 1.5–2.0 m from subject, chest-to-face height
+  tilt_deg: 15                 # 10–30 degrees downward
+
+# Waveshare ESP32-S3 Thermal Camera
+# Sensor: 62x80 pixels, binary HTTP polling
+# Raw bytes: 9920 bytes = 62*80*2 (int16, divide by 100 to get Celsius)
+# IMPORTANT: Thermal was NOT used in RR training — inference-only signal path
+waveshare_thermal:
+  enabled: true
+  base_ip: "http://192.168.4.1"
+  endpoint: "/thermal/frame"   # confirmed active from scan_esp32.py
+  full_url: "http://192.168.4.1/thermal/frame"
+  frame_width: 80              # confirmed from test_waveshare_thermal.py
+  frame_height: 62             # confirmed from test_waveshare_thermal.py
+  expected_bytes: 9920         # 62 * 80 * 2 (int16)
+  raw_dtype: int16
+  celsius_scale: 100.0         # divide raw int16 by 100.0 to get Celsius
+  timeout_s: 2.0
+  retry_delay_s: 1.0
+  display_colormap: COLORMAP_INFERNO
+  # Homography to register thermal (62x80) -> RGB (480x640) space
+  # Run scripts/calibrate_thermal.py once to compute and paste here
+  homography_matrix: null
+
+# Cross-sensor sync
+sync:
+  tolerance_ms: 33             # max allowed timestamp gap between streams
+  ring_buffer_size: 64         # frames held per stream in ring buffer

@@ -1,0 +1,32 @@
+# REFERENCE ONLY — original recording protocol
+# Not used at runtime. Kept for paper reproducibility.
+# Subject videos are locked — do NOT re-record or re-train.
+
+subjects: 5
+thermal_in_training: false  # thermal excluded from TCN training — inference only
+
+rr_hr_conditions:
+  - { name: "upright_rest_bright", duration_s: 30 }
+  - { name: "paced_8bpm",          duration_s: 60, rr_bpm: 8 }
+  - { name: "paced_10bpm",         duration_s: 60, rr_bpm: 10 }
+  - { name: "paced_12bpm",         duration_s: 60, rr_bpm: 12 }
+  - { name: "paced_14bpm",         duration_s: 60, rr_bpm: 14 }
+  - { name: "paced_16bpm",         duration_s: 60, rr_bpm: 16 }
+  - { name: "dim_light",           duration_s: 30 }
+  - { name: "dark_ir_only",        duration_s: 30 }
+  - { name: "reclined_45deg",      duration_s: 30 }
+  - { name: "face_turned",         duration_s: 30 }
+  - { name: "face_partial_cover",  duration_s: 30 }
+  - { name: "breathhold",          duration_s: 30 }
+  - { name: "post_exercise",       duration_s: 30 }
+
+fall_conditions:
+  - { name: "standup_normal", reps: 15 }
+  - { name: "standup_slow",   reps: 15 }
+  - { name: "sitting_edge",   reps: 10 }
+  - { name: "reach_floor",    reps: 15 }
+  - { name: "handover",       reps: 15 }
+  - { name: "fall_bag",       reps: 30 }
+  - { name: "fidget_cough",   reps: 20 }
+
+file_naming: "{subjectID}_{condition}_{YYYYMMDD_HHMMSS}_{streamtype}.{ext}"

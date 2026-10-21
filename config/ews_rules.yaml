@@ -1,0 +1,45 @@
+# Early Warning Score rules (NEWS2 / RRT-18 style)
+# Camera-derived vitals only — does not replace clinical scoring
+
+vitals:
+  rr:
+    unit: bpm
+    normal_range: [12, 20]
+    score_table:
+      - { range: "<=8",   score: 3 }
+      - { range: "9-11",  score: 1 }
+      - { range: "12-20", score: 0 }
+      - { range: "21-24", score: 2 }
+      - { range: ">=25",  score: 3 }
+  hr:
+    unit: bpm
+    normal_range: [51, 90]
+    score_table:
+      - { range: "<=40",   score: 3 }
+      - { range: "41-50",  score: 1 }
+      - { range: "51-90",  score: 0 }
+      - { range: "91-110", score: 1 }
+      - { range: "111-130",score: 2 }
+      - { range: ">=131",  score: 3 }
+
+# TAA (Thoraco-Abdominal Asynchrony) — bonus clinical flag from depth RR path
+taa:
+  phase_diff_threshold_rad: 1.2
+  sustain_window_s: 10          # must persist after Kalman filtering
+
+# EWS alert levels
+ews_levels:
+  green:  { score_range: [0, 1],  action: "routine_monitoring" }
+  amber:  { score_range: [2, 4],  action: "increased_monitoring" }
+  red:    { score_range: [5, 999], action: "urgent_clinical_review" }
+
+# Alarm state machine
+alarm:
+  dwell_s: 1.5
+  staff_suppress: true          # staff_count >= 2 -> log_only
+  target_alerts_per_shift: 3
+  escalation_stages:
+    - { delay_s: 0,  action: "log_only" }
+    - { delay_s: 10, action: "dashboard_highlight" }
+    - { delay_s: 30, action: "chime" }
+    - { delay_s: 60, action: "phone_push" }

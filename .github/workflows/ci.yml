@@ -1,0 +1,19 @@
+name: VisionICU CI
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+    branches: [main]
+
+jobs:
+  leakage-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+      - run: pip install pytest numpy
+      - name: Subject leakage test (blocks merge on failure)
+        run: pytest tests/test_leakage.py tests/test_types.py -v

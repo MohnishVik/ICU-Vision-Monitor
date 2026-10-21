@@ -1,0 +1,120 @@
+# signal.yaml — signal-processing settings: windows, bands, quality gates, module params.
+# No weights here. TUNE = starting value, not yet checked against your data.
+# Everything in this file is overridable; defaults in code apply if a key is missing.
+
+# ─────────────────────── Respiratory Rate ───────────────────────
+rr:
+  reported_range_bpm: [4, 42]
+  agreement_gate_bpm: 4.0        # any two active paths further apart than this -> value=None
+
+  depth:
+    roi: from_pose               # sternal box between the shoulder keypoints (scene layer)
+    fallback_roi_frac:           # fixed box used when no pose is found
+      x: [0.44, 0.65]
+      y: [0.54, 0.82]
+    min_valid_depth_units: 5
+    min_valid_pixels: 30
+    window_s: 30
+    update_every_s: 1.0
+    min_fill_s: 20
+    detrend: linear
+    smooth_s: 0.35
+    band_hz: [0.067, 0.70]       # 4-42 BrPM
+    psd: { window: hann, nfft: 16384 }
+
+  thermal:
+    window_s: 30
+    update_every_s: 1.0
+    min_fill_s: 20
+    band_hz: [0.067, 0.70]
+    roi: null                    # nostril/mouth ROI needs the thermal-to-RGB homography
+
+  quality:
+    peak_power_frac_min: 0.30    # TUNE: below this -> value=None (no reliable rate)
+    peak_power_frac_good: 0.60   # TUNE: sqi reaches 1.0 here
+    peak_half_width_hz: 0.03
+
+  apnea:
+    window_s: 10
+    amplitude_ratio_below: 0.25  # TUNE
+    min_duration_s: 10
+
+  legacy_offline:                # used only to reproduce the 1.88 BrPM paper number
+    used_by: training/eval.py
+    detrend: quadratic
+    smooth_s: 0.5
+    band_hz: [0.032, 0.55]
+    nfft: 32768
+    low_band_priority: { cutoff_hz: 0.135, ratio: 0.35 }
+
+# ─────────────────────── Heart Rate ───────────────────────
+hr:
+  reported_range_bpm: [40, 180]
+  agreement_gate_bpm: 10.0
+
+  pos:
+    roi: from_pose
+    inner_window_s: 1.6          # POS sliding window (Wang et al.)
+    window_s: 20
+    update_every_s: 1.0
+    min_fill_s: 10
+    band_hz: [0.67, 3.0]         # 40-180 BPM
+    bandpass_order: 2
+    psd: { window: hann, nfft: 16384 }
+    fallback_roi_frac:
+      x: [0.25, 0.75]
+      y: [0.08, 0.50]
+
+  quality:
+    peak_power_frac_min: 0.25    # TUNE
+    peak_power_frac_good: 0.50   # TUNE
+    peak_half_width_hz: 0.05
+
+# ─────────────────────── Thoraco-Abdominal Asynchrony ───────────────────────
+taa:
+  enabled: true
+  window_s: 30
+  update_every_s: 1.0
+  min_fill_s: 20
+  band_hz: [0.067, 0.70]
+  phase_diff_threshold_rad: 1.2  # ~68 deg out of phase to flag
+  sustain_window_s: 10
+  min_amplitude_units: 0.5
+  min_valid_depth_units: 5
+  min_valid_pixels: 30
+  chest_fallback_roi:   { x: [0.44, 0.65], y: [0.54, 0.68] }
+  abdomen_fallback_roi: { x: [0.42, 0.68], y: [0.70, 0.90] }
+
+# ─────────────────────── Fall ───────────────────────
+fall:
+  kinematics:
+    upright_ar:    1.20
+    upright_angle: 30.0
+    horiz_ar:      0.90
+    horiz_angle:   50.0
+    vel_thresh:    0.25
+    ground_y:      0.70
+    min_fall_vel:  0.15
+    early_angle:   22.0
+    early_ar:      1.25
+  fsm:
+    upright_lookback: 1.20
+    stab_vel: 0.08
+    stab_dur: 0.60
+    max_dur:  3.50
+    frame_thresh: 0.50
+  ml:
+    temporal_window: 32
+    stride: 4
+    threshold: 0.50
+    postprocess_M: 2
+    confirmation_window_s: 1.0
+    cooldown_s: 5.0
+    suppress_during_lying: true
+  gru_weights_primary:  "models/public/fall_gru_pseudo.pt"
+  gru_weights_fallback: "models/public/fall_gru_pseudo_e1.pt"
+  yolo_weights:         "models/public/yolov8n-pose.pt"
+  yolo_conf: 0.25
+  yolo_iou:  0.45
+  yolo_img_size: 640
+  device: "auto"
