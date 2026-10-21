@@ -1,0 +1,130 @@
+/* Fonts are bundled (offline ICU devices): Barlow superfamily, varied by width. */
+@import '@fontsource/barlow/400.css';
+@import '@fontsource/barlow/500.css';
+@import '@fontsource/barlow/600.css';
+@import '@fontsource/barlow-semi-condensed/500.css';
+@import '@fontsource/barlow-semi-condensed/600.css';
+@import '@fontsource/barlow-condensed/500.css';
+@import '@fontsource/barlow-condensed/600.css';
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ------------------------------------------------------------------ tokens --
+   Night-ward palette. "Dark cockpit": normal = quiet neutrals; colour appears
+   only for vital identity (HR/RR) and for deviation (amber/red).
+   HR/RR chart steps validated CVD-safe on --panel (dataviz validator):
+   #2FAE68 / #9A78EA, worst CVD dE 20.7, tritan 12.5. Readout numerals use
+   lighter steps of the same hues for legibility at distance.               */
+:root {
+  color-scheme: dark;
+  --ward: #0f1c20;
+  --panel: #152429;
+  --raised: #1b2e34;
+  --hairline: #24393f;
+  --hairline-strong: #31494f;
+  --ink: #e6eeec;
+  --ink-2: #9fb3b1;
+  --mute: #6e8582;
+  --scrub: #5cc6d0;          /* interactive accent: focus, primary action */
+  --hr: #74e3a4;             /* heart rate readout */
+  --hr-line: #2fae68;
+  --rr: #c2aeff;             /* respiratory rate readout */
+  --rr-line: #9a78ea;
+  --amber: #ff9b3d;          /* status: amber alarm (always with icon + label) */
+  --red: #ff4d5e;            /* status: red alarm (always with icon + label) */
+  --grid: #1f3238;
+  --axis: #31494f;
+}
+
+html, body, #root { height: 100%; }
+body {
+  margin: 0;
+  background: var(--ward);
+  color: var(--ink);
+  font-family: Barlow, system-ui, sans-serif;
+  font-size: 16px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* type scale (Bringhurst): 12 14 16 18 21 24 36 48 72 96 */
+.t-micro { font: 500 12px/1.35 "Barlow Semi Condensed", Barlow, sans-serif; letter-spacing: .01em; }
+.t-label { font: 500 14px/1.4 "Barlow Semi Condensed", Barlow, sans-serif; letter-spacing: .005em; }
+.t-body  { font: 400 16px/1.55 Barlow, sans-serif; }
+.t-lead  { font: 500 18px/1.5 Barlow, sans-serif; }
+.t-head  { font: 600 21px/1.25 "Barlow Semi Condensed", Barlow, sans-serif; letter-spacing: -.005em; }
+.t-title { font: 600 24px/1.2 "Barlow Semi Condensed", Barlow, sans-serif; letter-spacing: -.01em; }
+.t-num-s { font: 600 36px/1 "Barlow Condensed", Barlow, sans-serif; letter-spacing: -.01em; }
+.t-num-m { font: 600 48px/.95 "Barlow Condensed", Barlow, sans-serif; letter-spacing: -.015em; }
+.t-num-l { font: 600 96px/.86 "Barlow Condensed", Barlow, sans-serif; letter-spacing: -.025em; }
+.tnum { font-variant-numeric: tabular-nums; }
+
+/* focus: always visible for keyboard users */
+:focus { outline: none; }
+:focus-visible { outline: 2px solid var(--scrub); outline-offset: 2px; border-radius: 6px; }
+
+::selection { background: rgba(92, 198, 208, .3); }
+
+/* scrollbars that belong to the room */
+* { scrollbar-width: thin; scrollbar-color: var(--hairline-strong) transparent; }
+
+/* ------------------------------------------------------------------ motion --
+   Only motion that carries information: the heart marker beats at the
+   measured HR, the breath bar breathes at the measured RR, alarms pulse.
+   Durations are set inline from live values. All of it stops for
+   prefers-reduced-motion, and stops when a value goes stale.              */
+@keyframes beat {
+  0%, 100% { transform: scale(1); opacity: .55; }
+  12% { transform: scale(1.35); opacity: 1; }
+  30% { transform: scale(1); opacity: .7; }
+}
+@keyframes breathe {
+  0%, 100% { transform: scaleX(.18); }
+  45% { transform: scaleX(1); }
+}
+@keyframes alarm-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 var(--pulse-color, transparent); }
+  50% { box-shadow: 0 0 0 4px var(--pulse-color, transparent); }
+}
+.beat { animation: beat var(--period, 1s) ease-out infinite; transform-origin: center; }
+.breathe { animation: breathe var(--period, 4s) ease-in-out infinite; transform-origin: left center; }
+.alarm-pulse { animation: alarm-pulse 1.2s ease-in-out infinite; }
+
+@media (prefers-reduced-motion: reduce) {
+  .beat, .breathe, .alarm-pulse { animation: none !important; }
+  .breathe { transform: scaleX(.6); }
+}
+
+/* hairline-structured panel: structure from rules, not shadows */
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--hairline);
+  border-radius: 12px;
+}
+.rule-t { border-top: 1px solid var(--hairline); }
+.rule-b { border-bottom: 1px solid var(--hairline); }
+
+/* stale / unavailable values: hatched, dimmed, never mistaken for live */
+.stale-hatch {
+  background-image: repeating-linear-gradient(135deg, rgba(110,133,130,.14) 0 2px, transparent 2px 7px);
+}
+
+.btn {
+  display: inline-flex; align-items: center; gap: .5rem;
+  height: 36px; padding: 0 14px; border-radius: 8px;
+  font: 600 14px/1 "Barlow Semi Condensed", Barlow, sans-serif;
+  border: 1px solid var(--hairline-strong); color: var(--ink); background: var(--raised);
+  transition: background-color .12s ease, border-color .12s ease;
+  cursor: pointer; white-space: nowrap;
+}
+.btn:hover { background: #22383f; border-color: #3d575e; }
+.btn:disabled { opacity: .45; cursor: not-allowed; }
+.btn-primary { background: var(--scrub); border-color: var(--scrub); color: #06262a; }
+.btn-primary:hover { background: #79d4dc; border-color: #79d4dc; }
+.btn-ghost { background: transparent; border-color: transparent; color: var(--ink-2); }
+.btn-ghost:hover { background: var(--raised); color: var(--ink); }
+.btn-danger { background: var(--red); border-color: var(--red); color: #2a0509; }
+.btn-danger:hover { background: #ff6d7a; border-color: #ff6d7a; }
