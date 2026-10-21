@@ -9,6 +9,7 @@ import PainPanel from '../components/PainPanel';
 import StatusBadge from '../components/StatusBadge';
 import StreamPanel from '../components/StreamPanel';
 import TAAPanel from '../components/TAAPanel';
+import ThermalPanel from '../components/ThermalPanel';
 import VitalReadout from '../components/VitalReadout';
 import VitalsTrendChart from '../components/VitalsTrendChart';
 import { usePatientHistory } from '../hooks/usePatientData';
@@ -108,7 +109,11 @@ function SourcesPanel({ snap }: { snap: PatientSnapshot }) {
           )}
           {rows.map(({ name, m }) => (
             <tr key={name} className="rule-t">
-              <td className="py-2 text-ink">{label[name] ?? name}</td>
+              <td className="py-2 text-ink">
+                {name === 'rr.thermal' && m?.meta?.roi === 'warmest_patch'
+                  ? 'RR from thermal, warmest spot (not aligned to the nose)'
+                  : label[name] ?? name}
+              </td>
               <td className="text-right">{m?.value == null ? <span className="text-mute">none</span> : Math.round(m.value)}</td>
               <td className="text-right">{m ? `${Math.round(m.sqi * 100)}%` : <span className="text-mute">offline</span>}</td>
               <td className="text-right text-ink2">{m ? `${m.latency_ms.toFixed(1)} ms` : '--'}</td>
@@ -168,6 +173,7 @@ export default function PatientDetail() {
       <div className="grid gap-5 lg:grid-cols-12">
         <div className="lg:col-span-7 flex flex-col gap-5 min-w-0">
           <StreamPanel snap={snap} />
+          <ThermalPanel snap={snap} />
         </div>
         <div className="lg:col-span-5 flex flex-col gap-5 min-w-0">
           <section className="panel p-5 grid gap-6 sm:grid-cols-2 lg:grid-cols-1 xl:grid-cols-2" aria-label="Vital signs">

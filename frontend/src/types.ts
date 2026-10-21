@@ -80,6 +80,48 @@ export interface Scene {
   others: [number, number, number, number][];
   chair: [number, number][] | null;
   redaction: 'faces' | 'unavailable' | 'disabled';
+  nostril_box: [number, number, number, number] | null;   // RGB px, breathing region
+  thermal_roi: [number, number, number, number] | null;   // thermal px
+  thermal_registered: boolean;
+  thermal_quality: AlignmentQuality | null;
+}
+
+// ------------------------------------------------------------------ thermal (ESP32)
+export type AlignmentQuality = 'good' | 'fair' | 'poor' | 'unchecked';
+
+export interface ThermalGrid {
+  w: number;
+  h: number;
+  min: number;
+  max: number;
+  data: number[];            // centi-degC, row-major, length w*h
+}
+
+export interface PointPair { rgb: [number, number]; thermal: [number, number] }
+
+export interface ThermalRegistrationStatus {
+  registered: boolean;
+  source: 'session' | 'camera.yaml' | 'demo' | null;
+  error_px: number | null;
+  n_pairs: number;
+  quality: AlignmentQuality | null;
+  ts: number | null;
+  pairs: PointPair[];
+}
+
+export interface ThermalPayload extends Partial<ThermalGrid> {
+  online: boolean;
+  ts: number | null;
+  roi: [number, number, number, number] | null;
+  roi_source: 'nostril' | 'warmest_patch';
+  registration: ThermalRegistrationStatus;
+  trace: { t: number[]; c: number[] };
+}
+
+export interface ThermalSnapshot {
+  snapshot_id: string;
+  rgb_size: [number, number];
+  thermal: ThermalGrid;
 }
 
 export type AlarmKind = 'ews' | 'fall' | 'apnea' | 'taa';

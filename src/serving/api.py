@@ -13,6 +13,13 @@ Endpoints (all under /api, matching frontend/vite.config.ts):
   POST   /patients/{id}/calibration       — {"corners": [[x,y] x4], "label": "chair"|"bed"}
   POST   /patients/{id}/calibration/reuse — load this bed's last saved calibration
   DELETE /patients/{id}/calibration       — clear (re-calibrate)
+  GET    /patients/{id}/thermal           — thermal grid, breathing ROI, breath trace, alignment
+  GET    /patients/{id}/thermal/registration — thermal<->RGB alignment status
+  POST   /patients/{id}/thermal/registration — {"pairs": [{"rgb": [x,y], "thermal": [x,y]}, ...]}
+  DELETE /patients/{id}/thermal/registration — remove alignment (back to warmest spot)
+  POST   /patients/{id}/thermal/snapshot  — freeze a colour + thermal pair for marking points
+  GET    /patients/{id}/thermal/snapshot/{sid}/rgb.jpg — the frozen colour frame
+  GET    /patients/{id}/thermal/overlay.jpg — colour frame with the aligned thermal on top
   GET    /patients/{id}/frame.jpg         — latest frame (faces blurred)
   GET    /patients/{id}/stream.mjpg       — live MJPEG (faces blurred)
 WebSockets (src/serving/websocket.py): /ws/stream/{id}, /ws/ward
@@ -44,6 +51,15 @@ class AckBody(BaseModel):
 class CalibrationBody(BaseModel):
     corners: List[List[float]] = Field(..., min_length=4, max_length=4)
     label: str = "chair"
+
+
+class PointPair(BaseModel):
+    rgb: List[float] = Field(..., min_length=2, max_length=2)
+    thermal: List[float] = Field(..., min_length=2, max_length=2)
+
+
+class AlignmentBody(BaseModel):
+    pairs: List[PointPair] = Field(..., min_length=1, max_length=64)
 
 
 def _source(manager: EngineManager, patient_id: str) -> PatientSource:
@@ -125,6 +141,52 @@ def build_api_router(manager: EngineManager) -> APIRouter:
     @r.delete("/patients/{patient_id}/calibration")
     def clear_calibration(patient_id: str) -> dict:
         return _source(manager, patient_id).clear_calibration()
+
+    # ---------------------------------------------------------------- thermal (ESP32)
+    @r.get("/patients/{patient_id}/thermal")
+    def thermal(patient_id: str) -> dict:
+        """Latest thermal grid (centi-degC), breathing ROI, breath trace, alignment status."""
+        return _source(manager, patient_id).thermal_payload()
+
+    @r.get("/patients/{patient_id}/thermal/registration")
+    def thermal_registration(patient_id: str) -> dict:
+        return _source(manager, patient_id).thermal_registration_status()
+
+    @r.post("/patients/{patient_id}/thermal/registration")
+    def set_thermal_registration(patient_id: str, body: AlignmentBody) -> dict:
+        try:
+            return _source(manager, patient_id).set_thermal_registration(
+                [p.model_dump() for p in body.pairs])
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from None
+
+    @r.delete("/patients/{patient_id}/thermal/registration")
+    def clear_thermal_registration(patient_id: str) -> dict:
+        return _source(manager, patient_id).clear_thermal_registration()
+
+    @r.post("/patients/{patient_id}/thermal/snapshot")
+    def thermal_snapshot(patient_id: str) -> dict:
+        try:
+            return _source(manager, patient_id).thermal_snapshot()
+        except RuntimeError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from None
+
+    @r.get("/patients/{patient_id}/thermal/snapshot/{snapshot_id}/rgb.jpg")
+    def thermal_snapshot_rgb(patient_id: str, snapshot_id: str) -> Response:
+        data = _source(manager, patient_id).snapshot_rgb(snapshot_id)
+        if data is None:
+            raise HTTPException(status_code=404, detail="Snapshot expired - take a new one.")
+        return Response(content=data, media_type="image/jpeg", headers=_NO_CACHE)
+
+    @r.get("/patients/{patient_id}/thermal/overlay.jpg")
+    def thermal_overlay(patient_id: str) -> Response:
+        src = _source(manager, patient_id)
+        if src.thermal_reg is None:
+            raise HTTPException(status_code=409, detail="The thermal camera is not aligned yet.")
+        data = src.thermal_overlay_jpeg()
+        if data is None:
+            raise HTTPException(status_code=503, detail="Waiting for colour and thermal frames.")
+        return Response(content=data, media_type="image/jpeg", headers=_NO_CACHE)
 
     # ---------------------------------------------------------------- video
     @r.get("/patients/{patient_id}/frame.jpg")

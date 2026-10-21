@@ -45,6 +45,11 @@ simulated measurements still go through the real fusion, early-warning and alarm
   alarms with acknowledge, 5 min to 4 h trends against NEWS2 bands, falls, breathing
   synchrony, and which sensor path produced each number.
 - **Chair setup** happens in the browser: click the four seat corners on a still frame.
+- **Thermal camera (ESP32):** live heatmap with °C on hover and the breath-temperature waveform
+  RR is computed from. A one-time **alignment** (bed page → "Align with colour camera": click a
+  mug of hot water in both images at 4–6 spots) maps thermal pixels onto the colour image, so RR
+  reads the temperature at the nostrils instead of the warmest spot. Saved per bed in
+  `config/sessions/thermal_<bed>.json`; a fixed `homography_matrix` in `camera.yaml` also works.
 - **Alarms** escalate log → dashboard → chime → phone (config/ews_rules.yaml), are held back
   while staff are at the bedside, and falls stay up until acknowledged.
 - **Honesty rules:** a vital that cannot be measured shows "—" with the reason; a reading older
