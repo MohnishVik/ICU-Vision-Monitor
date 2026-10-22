@@ -1,7 +1,5 @@
 # VisionICU
 
-[![VisionICU CI](https://github.com/MohnishVik/ICU-Vision-Monitor/actions/workflows/ci.yml/badge.svg)](https://github.com/MohnishVik/ICU-Vision-Monitor/actions/workflows/ci.yml)
-
 Real-time, non-invasive, camera-based patient monitoring for ICU and IMCU environments.
 Estimates Heart Rate, Respiratory Rate, Fall/Chair-Exit events, and Pain proxy
 from video alone — no contact sensors attached to the patient.
@@ -12,8 +10,7 @@ live web dashboard for the nursing team: vital signs with their signal quality, 
 respiratory-cardiac early-warning score that explains itself, fall detection, breathing
 synchrony, and escalating alarms.
 
-> **Research prototype.** VisionICU is not a certified medical device and must not be used
-> for clinical decisions. It does not replace standard bedside monitoring.
+> **Research prototype.** 
 
 ---
 
