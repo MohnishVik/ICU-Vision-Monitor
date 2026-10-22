@@ -101,17 +101,17 @@ export default function ThermalCanvas({ grid, range, roi, markers, onPick, pixel
         )}
         {markers?.map((m, i) => (
           <g key={i} opacity={m.pending ? 0.75 : 1}>
-            <circle cx={m.x} cy={m.y} r={r * 1.25} fill="var(--scrub)" stroke="#06262a"
+            <circle cx={m.x} cy={m.y} r={r * 1.25} fill="var(--ink)" stroke="var(--bg)"
                     strokeWidth={1.5} vectorEffect="non-scaling-stroke" />
             <text x={m.x} y={m.y} dy="0.36em" textAnchor="middle" fontSize={r * 1.5}
-                  fontFamily="Barlow Condensed" fontWeight={600} fill="#06262a">{m.label}</text>
+                  fontFamily="IBM Plex Sans Condensed" fontWeight={600} fill="var(--bg)">{m.label}</text>
           </g>
         ))}
         {hover && (
           <g pointerEvents="none">
-            <line x1={hover.x} y1={0} x2={hover.x} y2={h} stroke="rgba(230,238,236,.5)" strokeWidth={1}
+            <line x1={hover.x} y1={0} x2={hover.x} y2={h} stroke="color-mix(in srgb, var(--ink) 50%, transparent)" strokeWidth={1}
                   vectorEffect="non-scaling-stroke" />
-            <line x1={0} y1={hover.y} x2={w} y2={hover.y} stroke="rgba(230,238,236,.5)" strokeWidth={1}
+            <line x1={0} y1={hover.y} x2={w} y2={hover.y} stroke="color-mix(in srgb, var(--ink) 50%, transparent)" strokeWidth={1}
                   vectorEffect="non-scaling-stroke" />
           </g>
         )}

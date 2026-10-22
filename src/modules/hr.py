@@ -4,8 +4,8 @@ hr.py — Heart Rate module (rPPG)
 Primary path: POS (Plane-Orthogonal-to-Skin). No weights. Always on.
              Lifted from your evaluate_hr_pos.py, wrapped in the Measurement contract
              and the same peak-power-fraction quality gate used by rr.py.
-Secondary:   EfficientPhys is disabled by default (see models.yaml -> learned_paths);
-             on your 7 held-out UBFC subjects it collapsed to ~100 BPM for everyone.
+Secondary:   EfficientPhys lives in src/modules/learned.py and is shown alongside, fused only when
+             signal.yaml learned.fuse is true; on 7 held-out UBFC subjects it gave ~100 BPM for everyone.
 
 ROI
   Prefers roi.face_roi from the scene layer. Falls back to a fixed upper-centre box

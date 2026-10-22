@@ -4,6 +4,12 @@ Serves compiled frontend/dist/ as static files (no separate web server needed).
 
 Endpoints (all under /api, matching frontend/vite.config.ts):
   GET    /health                          — module liveness + stale-value check
+  GET    /patients/{id}/session          — recording status; POST starts ({label, condition, reference})
+  POST   /patients/{id}/session/reference — add a reference reading ({rr?, hr?, note})
+  DELETE /patients/{id}/session          — stop recording
+  GET    /sessions                        — recorded sessions (newest first)
+  GET    /sessions/{sid}/report           — MAE + coverage per source (?warmup_s=&settle_s=)
+  GET    /models                          — expected weight files and whether each is present
   GET    /patients                        — active patient list + current states
   GET    /patients/{id}/vitals            — latest snapshot (vitals, EWS, alarms, scene)
   GET    /patients/{id}/history           — time-series for trend charts (?minutes=&max_points=)
@@ -27,6 +33,7 @@ WebSockets (src/serving/websocket.py): /ws/stream/{id}, /ws/ward
 from __future__ import annotations
 
 import asyncio
+import re
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -56,6 +63,25 @@ class CalibrationBody(BaseModel):
 class PointPair(BaseModel):
     rgb: List[float] = Field(..., min_length=2, max_length=2)
     thermal: List[float] = Field(..., min_length=2, max_length=2)
+
+
+class Reference(BaseModel):
+    rr: Optional[float] = Field(None, ge=0, le=80)
+    hr: Optional[float] = Field(None, ge=20, le=250)
+
+
+class SessionBody(BaseModel):
+    label: str = Field(..., min_length=1, max_length=80)
+    condition: str = Field("", max_length=80)
+    notes: str = Field("", max_length=500)
+    reference: Reference = Reference()
+
+
+class ReferenceBody(Reference):
+    note: str = Field("", max_length=200)
+
+
+_SID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,120}$")
 
 
 class AlignmentBody(BaseModel):
@@ -90,6 +116,73 @@ def build_api_router(manager: EngineManager) -> APIRouter:
         return {"status": "degraded" if degraded else "ok", "version": __version__,
                 "mode": manager.mode, "uptime_s": time.time() - manager.started,
                 "server_time": time.time(), "patients": patients}
+
+    @r.get("/models")
+    def models() -> dict:
+        from src.serving.models_check import check_models
+        any_src = next(iter(manager.sources.values()), None)
+        rows = check_models(".", any_src.signal_cfg if any_src is not None else None)
+        return {"mode": manager.mode, "files": rows,
+                "missing_required": [r["file"] for r in rows if r["required"] and not r["present"]]}
+
+    # ---- recording sessions + comparison -------------------------------------------
+    @r.get("/patients/{patient_id}/session")
+    def session_status(patient_id: str) -> dict:
+        return _source(manager, patient_id).session_status()
+
+    @r.post("/patients/{patient_id}/session")
+    def start_session(patient_id: str, body: SessionBody) -> dict:
+        src = _source(manager, patient_id)
+        try:
+            return src.start_session(body.label, body.condition, body.reference.model_dump(), body.notes)
+        except RuntimeError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from None
+
+    @r.post("/patients/{patient_id}/session/reference")
+    def add_reference(patient_id: str, body: ReferenceBody) -> dict:
+        src = _source(manager, patient_id)
+        try:
+            return src.add_session_reference(body.rr, body.hr, body.note)
+        except RuntimeError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from None
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from None
+
+    @r.delete("/patients/{patient_id}/session")
+    def stop_session(patient_id: str) -> dict:
+        src = _source(manager, patient_id)
+        try:
+            return src.stop_session()
+        except RuntimeError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from None
+
+    @r.get("/sessions")
+    def sessions() -> list:
+        import json as _json
+
+        from src.serving.session_log import sessions_root
+        root = sessions_root()
+        out = []
+        if root.is_dir():
+            for d in root.iterdir():
+                try:
+                    out.append(_json.loads((d / "meta.json").read_text()))
+                except Exception:  # noqa: BLE001 - half-written or foreign folder
+                    continue
+        return sorted(out, key=lambda m: m.get("started") or 0, reverse=True)
+
+    @r.get("/sessions/{session_id}/report")
+    def session_report(session_id: str, warmup_s: float = Query(30.0, ge=0, le=600),
+                       settle_s: float = Query(20.0, ge=0, le=600)) -> dict:
+        from src.evaluation.compare import load_session, score_session, strip_internal
+        from src.serving.session_log import sessions_root
+        if not _SID.match(session_id):
+            raise HTTPException(status_code=400, detail="Invalid session id")
+        root = sessions_root().resolve()
+        d = (root / session_id).resolve()
+        if d.parent != root or not (d / "meta.json").is_file():
+            raise HTTPException(status_code=404, detail=f"Unknown session '{session_id}'")
+        return strip_internal(score_session(load_session(d), warmup_s=warmup_s, settle_s=settle_s))
 
     @r.get("/patients")
     def patients() -> list:

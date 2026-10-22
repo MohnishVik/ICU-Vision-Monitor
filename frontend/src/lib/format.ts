@@ -67,5 +67,26 @@ export const MODULE_TEXT: Record<string, string> = {
   hr: 'Heart rate',
   fall: 'Fall detection',
   taa: 'Breathing synchrony',
-  pain: 'Pain assessment',
+  pain: 'Pain expression (experimental)',
+  rr_learned: 'Respiratory rate, learned (experimental)',
+  hr_learned: 'Heart rate, learned (experimental)',
 };
+
+export interface SourceInfo { name: string; how: string; learned: boolean; color: string; dash?: string }
+
+/** Every RR / HR source, in display order. Learned paths are dashed in charts. */
+export const SOURCES: Record<string, SourceInfo> = {
+  'rr.fused':         { name: 'Fused', how: 'Inverse-variance blend of the fused paths', learned: false, color: 'var(--rr-line)' },
+  'rr.depth':         { name: 'Chest depth', how: 'D435 depth over the sternum, spectral peak', learned: false, color: 'var(--s1)' },
+  'rr.thermal':       { name: 'Nostril thermal', how: 'ESP32 breath temperature, spectral peak', learned: false, color: 'var(--s2)' },
+  'rr.cnn_lbrd':      { name: 'CNN · LBRD-IC', how: '1-D CNN on whole-frame green, trained on LBRD-IC', learned: true, color: 'var(--s3)', dash: '6 4' },
+  'rr.cnn_d435':      { name: 'CNN · D435 fine-tune', how: '1-D CNN on chest depth, fine-tuned on your D435 clips', learned: true, color: 'var(--s4)', dash: '2 3' },
+  'hr.fused':         { name: 'Fused', how: 'Inverse-variance blend of the fused paths', learned: false, color: 'var(--hr-line)' },
+  'hr.pos':           { name: 'Skin colour (POS)', how: 'rPPG plane-orthogonal-to-skin, spectral peak', learned: false, color: 'var(--s1)' },
+  'hr.efficientphys': { name: 'EfficientPhys', how: 'Temporal-shift CNN, trained on UBFC-rPPG', learned: true, color: 'var(--s3)', dash: '6 4' },
+};
+
+export const sourceName = (s: string) => SOURCES[s]?.name ?? s;
+
+export const fmt1 = (v: number | null | undefined, digits = 1): string =>
+  v === null || v === undefined || !Number.isFinite(v) ? '–' : v.toFixed(digits);

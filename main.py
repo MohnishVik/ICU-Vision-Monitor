@@ -42,6 +42,16 @@ def main() -> None:
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 
+    if not args.demo:
+        import yaml
+        from src.serving.models_check import check_models, format_report
+        try:
+            with open(f"{args.config_dir}/signal.yaml") as f:
+                sig = yaml.safe_load(f) or {}
+        except FileNotFoundError:
+            sig = {}
+        print(format_report(check_models(".", sig)))
+
     import uvicorn
     from src.serving.api import create_app
     from src.serving.engine import EngineManager

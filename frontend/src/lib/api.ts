@@ -1,7 +1,7 @@
 // api.ts — typed client for the FastAPI server (src/serving/api.py)
 import type {
-  CalibrationStatus, Health, History, PatientSnapshot, PatientSummary, PointPair, ThermalPayload,
-  ThermalRegistrationStatus, ThermalSnapshot,
+  CalibrationStatus, Health, History, ModelsReport, PatientSnapshot, PatientSummary, PointPair,
+  SessionMeta, SessionReport, SessionStatus, ThermalPayload, ThermalRegistrationStatus, ThermalSnapshot,
 } from '../types';
 
 export class ApiError extends Error {
@@ -67,6 +67,18 @@ export const api = {
     }),
   clearThermalRegistration: (id: string) =>
     request<ThermalRegistrationStatus>(`/api/patients/${enc(id)}/thermal/registration`, { method: 'DELETE' }),
+  models: () => request<ModelsReport>('/api/models'),
+  session: (id: string) => request<SessionStatus>(`/api/patients/${enc(id)}/session`),
+  startSession: (id: string, body: { label: string; condition: string; notes: string;
+                                     reference: { rr: number | null; hr: number | null } }) =>
+    request<SessionStatus>(`/api/patients/${enc(id)}/session`, { method: 'POST', body: JSON.stringify(body) }),
+  addReference: (id: string, body: { rr: number | null; hr: number | null; note: string }) =>
+    request<SessionStatus>(`/api/patients/${enc(id)}/session/reference`,
+                           { method: 'POST', body: JSON.stringify(body) }),
+  stopSession: (id: string) => request<SessionStatus>(`/api/patients/${enc(id)}/session`, { method: 'DELETE' }),
+  sessions: () => request<SessionMeta[]>('/api/sessions'),
+  report: (sid: string, warmup: number, settle: number) =>
+    request<SessionReport>(`/api/sessions/${enc(sid)}/report?warmup_s=${warmup}&settle_s=${settle}`),
   thermalSnapshot: (id: string) =>
     request<ThermalSnapshot>(`/api/patients/${enc(id)}/thermal/snapshot`, { method: 'POST' }),
 };

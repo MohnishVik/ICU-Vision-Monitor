@@ -13,11 +13,11 @@ export default function TAAPanel({ taa }: { taa: TAAInfo | null }) {
   const thr = THRESH / Math.PI;
 
   return (
-    <section className="panel p-5 flex flex-col gap-4" aria-labelledby="taa-h">
+    <section className="card card-pad flex flex-col gap-4" aria-labelledby="taa-h">
       <div className="flex items-center justify-between gap-3">
         <h2 id="taa-h" className="t-head">Breathing synchrony</h2>
         {flagged && (
-          <span className="t-micro inline-flex items-center gap-1.5 h-7 px-2.5 rounded-full bg-[#3a2611] text-[#ffc488] border border-[#6b4419]">
+          <span className="t-micro inline-flex items-center gap-1.5 h-7 px-2.5 rounded-full band-amber border">
             <TriangleAlert className="h-3.5 w-3.5" aria-hidden /> Paradoxical
           </span>
         )}
@@ -33,7 +33,7 @@ export default function TAAPanel({ taa }: { taa: TAAInfo | null }) {
         </p>
       ) : (
         <div className="flex flex-col gap-2">
-          <div className="relative h-2 rounded-full bg-raised" role="meter" aria-label="Chest-abdomen phase gap"
+          <div className="relative h-2 rounded-full bg-surface2" role="meter" aria-label="Chest-abdomen phase gap"
                aria-valuemin={0} aria-valuemax={180} aria-valuenow={Math.round((phase * 180) / Math.PI)}>
             <div className={`absolute inset-y-0 left-0 rounded-full ${flagged ? 'bg-amber' : 'bg-ink2'}`}
                  style={{ width: `${frac * 100}%` }} />

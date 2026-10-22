@@ -47,8 +47,17 @@ def test_vitals_snapshot_contract(demo_client):
                 "metrics", "version"):
         assert key in s
     assert set(s["vitals"]) == {"rr", "hr"}
-    assert s["pain"]["available"] is False
+    assert s["pain"]["available"] is True and s["pain"]["experimental"] is True
+    assert {"rr.depth", "rr.cnn_lbrd", "rr.cnn_d435"} <= set(s["vitals"]["rr"]["sources"])
+    assert s["vitals"]["rr"]["sources"]["rr.cnn_lbrd"]["role"] == "display"
     assert len(s["scene"]["keypoints"]) == 17 and len(s["scene"]["chair"]) == 4
+
+
+def test_models_endpoint(demo_client):
+    m = demo_client.get("/api/models").json()
+    files = {r["file"] for r in m["files"]}
+    assert "models/public/yolov8n-pose.pt" in files and "missing_required" in m
+    _strict(m)
 
 
 def test_history(demo_client):
@@ -156,12 +165,14 @@ def test_camera_mode_without_hardware_degrades_cleanly(tmp_path):
     app = create_app(manager, frontend_dir="does/not/exist")
     with TestClient(app) as client:
         assert _wait(lambda: client.get("/api/patients/bed-1/vitals").json()["status"]
-                     == "camera_offline", timeout=30)
+                     == "camera_offline", timeout=90)   # cold torch import can be slow
         s = client.get("/api/patients/bed-1/vitals").json()
         _strict(s)
         assert s["status_detail"]
         mods = s["modules"]
-        assert mods["pain"]["state"] == "pending"
+        assert mods["pain"]["state"] in ("ok", "degraded", "unavailable")   # weights are git-ignored
+        assert mods["rr_learned"]["state"] in ("ok", "degraded", "unavailable")
+        assert mods["hr_learned"]["state"] in ("ok", "degraded", "unavailable")
         assert mods["fall"]["state"] in ("unavailable", "degraded", "ok")
         assert mods["pose"]["state"] in ("unavailable", "ok")
         h = client.get("/api/health").json()
