@@ -3,6 +3,7 @@ import { BrowserRouter, Link, Route, Routes } from 'react-router-dom';
 import AppShell from './components/AppShell';
 import { WardProvider } from './context/WardContext';
 import Calibrate from './pages/Calibrate';
+import Compare from './pages/Compare';
 import Dashboard from './pages/Dashboard';
 import PatientDetail from './pages/PatientDetail';
 import System from './pages/System';
@@ -15,7 +16,7 @@ class ErrorBoundary extends Component<{ children: ReactNode }, { error: Error | 
   render() {
     if (!this.state.error) return this.props.children;
     return (
-      <div className="panel p-6 max-w-[70ch] flex flex-col gap-3">
+      <div className="card card-pad max-w-[70ch] flex flex-col gap-3">
         <p className="t-head">This view hit an error.</p>
         <p className="t-label text-ink2 break-words">{this.state.error.message}</p>
         <button type="button" className="btn w-fit" onClick={() => this.setState({ error: null })}>Try again</button>
@@ -27,7 +28,7 @@ class ErrorBoundary extends Component<{ children: ReactNode }, { error: Error | 
 function NotFound() {
   return (
     <div className="py-16 flex flex-col gap-4">
-      <p className="font-cond font-semibold text-[48px] leading-none">Page not found.</p>
+      <p className="t-display">Page not found.</p>
       <Link to="/" className="btn w-fit">Back to the ward</Link>
     </div>
   );
@@ -44,6 +45,7 @@ export default function App() {
               <Route path="/patients/:id" element={<PatientDetail />} />
               <Route path="/patients/:id/calibrate" element={<Calibrate />} />
               <Route path="/patients/:id/thermal" element={<ThermalAlign />} />
+              <Route path="/compare" element={<Compare />} />
               <Route path="/system" element={<System />} />
               <Route path="*" element={<NotFound />} />
             </Routes>

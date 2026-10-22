@@ -1,130 +1,194 @@
-/* Fonts are bundled (offline ICU devices): Barlow superfamily, varied by width. */
-@import '@fontsource/barlow/400.css';
-@import '@fontsource/barlow/500.css';
-@import '@fontsource/barlow/600.css';
-@import '@fontsource/barlow-semi-condensed/500.css';
-@import '@fontsource/barlow-semi-condensed/600.css';
-@import '@fontsource/barlow-condensed/500.css';
-@import '@fontsource/barlow-condensed/600.css';
+/* Fonts are bundled (ICU machines are often offline).
+   Atkinson Hyperlegible: designed for low-vision legibility (Braille Institute).
+   IBM Plex Sans Condensed: tabular numerals for vitals at distance.             */
+@import '@fontsource/atkinson-hyperlegible/400.css';
+@import '@fontsource/atkinson-hyperlegible/700.css';
+@import '@fontsource/ibm-plex-sans-condensed/500.css';
+@import '@fontsource/ibm-plex-sans-condensed/600.css';
 
 @tailwind base;
 @tailwind components;
-@tailwind utilities;
 
 /* ------------------------------------------------------------------ tokens --
-   Night-ward palette. "Dark cockpit": normal = quiet neutrals; colour appears
-   only for vital identity (HR/RR) and for deviation (amber/red).
-   HR/RR chart steps validated CVD-safe on --panel (dataviz validator):
-   #2FAE68 / #9A78EA, worst CVD dE 20.7, tritan 12.5. Readout numerals use
-   lighter steps of the same hues for legibility at distance.               */
-:root {
+   "Graphite & Bone". Warm neutrals only; no blue, teal or violet anywhere.
+   Colour is reserved for vital identity (HR green, RR yellow, the bedside
+   monitor convention) and for deviation (orange = watch, red = act), and is
+   never the only cue: alarms always carry an icon and words.
+   Experimental (learned) sources are marked by a dashed line + a flask label. */
+:root, :root[data-theme='dark'] {
   color-scheme: dark;
-  --ward: #0f1c20;
-  --panel: #152429;
-  --raised: #1b2e34;
-  --hairline: #24393f;
-  --hairline-strong: #31494f;
-  --ink: #e6eeec;
-  --ink-2: #9fb3b1;
-  --mute: #6e8582;
-  --scrub: #5cc6d0;          /* interactive accent: focus, primary action */
-  --hr: #74e3a4;             /* heart rate readout */
-  --hr-line: #2fae68;
-  --rr: #c2aeff;             /* respiratory rate readout */
-  --rr-line: #9a78ea;
-  --amber: #ff9b3d;          /* status: amber alarm (always with icon + label) */
-  --red: #ff4d5e;            /* status: red alarm (always with icon + label) */
-  --grid: #1f3238;
-  --axis: #31494f;
+  --bg: #121110;
+  --surface: #1a1917;
+  --surface-2: #23211e;
+  --surface-3: #2c2a26;
+  --line: #2f2c28;
+  --line-strong: #423e38;
+  --ink: #f2ede4;
+  --ink-2: #bdb4a6;
+  --mute: #8c8478;
+  --accent: #f2ede4;          /* primary action: bone on graphite */
+  --on-accent: #151412;
+  --hr: #6fd394;
+  --hr-line: #52c27c;
+  --rr: #e8cc62;
+  --rr-line: #d8b843;
+  --amber: #f39a3d;
+  --amber-ink: #ffcf9e;
+  --amber-bg: #3a2513;
+  --amber-line: #7a4a1d;
+  --red: #f0574f;
+  --red-ink: #ffc2bd;
+  --red-bg: #3e1614;
+  --red-line: #85302a;
+  --ok: #9cc58f;
+  --grid: #26241f;
+  --axis: #3a3631;
+  /* categorical, for comparing sources of one vital (always paired with dash + label) */
+  --s1: #f2ede4;  --s2: #d98a52;  --s3: #a9bd63;  --s4: #db8f8f;  --s5: #c6a47a;
+}
+
+:root[data-theme='light'] {
+  color-scheme: light;
+  --bg: #f4f1eb;
+  --surface: #fdfcf9;
+  --surface-2: #efebe4;
+  --surface-3: #e6e1d8;
+  --line: #e0dad0;
+  --line-strong: #c9c2b6;
+  --ink: #1c1a17;
+  --ink-2: #514c44;
+  --mute: #6f685d;
+  --accent: #1c1a17;
+  --on-accent: #fdfcf9;
+  --hr: #17803f;
+  --hr-line: #1f9a4d;
+  --rr: #8a6a00;
+  --rr-line: #b08a10;
+  --amber: #b85a00;
+  --amber-ink: #7a3c00;
+  --amber-bg: #fdebd6;
+  --amber-line: #eab27a;
+  --red: #c42b23;
+  --red-ink: #8a1c16;
+  --red-bg: #fbe1de;
+  --red-line: #eba39d;
+  --ok: #3f7a32;
+  --grid: #ebe6de;
+  --axis: #c9c2b6;
+  --s1: #1c1a17;  --s2: #b0601f;  --s3: #5f7a14;  --s4: #b14a4a;  --s5: #8a6a3f;
 }
 
 html, body, #root { height: 100%; }
 body {
   margin: 0;
-  background: var(--ward);
+  background: var(--bg);
   color: var(--ink);
-  font-family: Barlow, system-ui, sans-serif;
+  font-family: 'Atkinson Hyperlegible', system-ui, sans-serif;
   font-size: 16px;
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
 }
 
-/* type scale (Bringhurst): 12 14 16 18 21 24 36 48 72 96 */
-.t-micro { font: 500 12px/1.35 "Barlow Semi Condensed", Barlow, sans-serif; letter-spacing: .01em; }
-.t-label { font: 500 14px/1.4 "Barlow Semi Condensed", Barlow, sans-serif; letter-spacing: .005em; }
-.t-body  { font: 400 16px/1.55 Barlow, sans-serif; }
-.t-lead  { font: 500 18px/1.5 Barlow, sans-serif; }
-.t-head  { font: 600 21px/1.25 "Barlow Semi Condensed", Barlow, sans-serif; letter-spacing: -.005em; }
-.t-title { font: 600 24px/1.2 "Barlow Semi Condensed", Barlow, sans-serif; letter-spacing: -.01em; }
-.t-num-s { font: 600 36px/1 "Barlow Condensed", Barlow, sans-serif; letter-spacing: -.01em; }
-.t-num-m { font: 600 48px/.95 "Barlow Condensed", Barlow, sans-serif; letter-spacing: -.015em; }
-.t-num-l { font: 600 96px/.86 "Barlow Condensed", Barlow, sans-serif; letter-spacing: -.025em; }
+/* type scale: 12 13 15 17 20 24 32 44 64 88 */
+.t-micro { font: 400 12.5px/1.4 'Atkinson Hyperlegible', system-ui, sans-serif; letter-spacing: .01em; }
+.t-label { font: 400 14px/1.45 'Atkinson Hyperlegible', system-ui, sans-serif; }
+.t-body  { font: 400 16px/1.55 'Atkinson Hyperlegible', system-ui, sans-serif; }
+.t-strong { font-weight: 700; }
+.t-eyebrow { font: 600 12px/1.2 'IBM Plex Sans Condensed', system-ui, sans-serif; letter-spacing: .09em;
+             text-transform: uppercase; }
+.t-head  { font: 600 19px/1.25 'IBM Plex Sans Condensed', system-ui, sans-serif; letter-spacing: -.005em; }
+.t-title { font: 600 26px/1.15 'IBM Plex Sans Condensed', system-ui, sans-serif; letter-spacing: -.01em; }
+.t-display { font: 600 44px/1 'IBM Plex Sans Condensed', system-ui, sans-serif; letter-spacing: -.02em; }
+.t-num-s { font: 600 32px/1 'IBM Plex Sans Condensed', system-ui, sans-serif; letter-spacing: -.01em; }
+.t-num-m { font: 600 52px/.92 'IBM Plex Sans Condensed', system-ui, sans-serif; letter-spacing: -.02em; }
+.t-num-l { font: 600 88px/.86 'IBM Plex Sans Condensed', system-ui, sans-serif; letter-spacing: -.03em; }
 .tnum { font-variant-numeric: tabular-nums; }
+code, .mono { font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace; font-size: .9em; }
 
-/* focus: always visible for keyboard users */
 :focus { outline: none; }
-:focus-visible { outline: 2px solid var(--scrub); outline-offset: 2px; border-radius: 6px; }
-
-::selection { background: rgba(92, 198, 208, .3); }
-
-/* scrollbars that belong to the room */
-* { scrollbar-width: thin; scrollbar-color: var(--hairline-strong) transparent; }
+:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; border-radius: 6px; }
+::selection { background: color-mix(in srgb, var(--rr) 35%, transparent); }
+* { scrollbar-width: thin; scrollbar-color: var(--line-strong) transparent; }
 
 /* ------------------------------------------------------------------ motion --
-   Only motion that carries information: the heart marker beats at the
-   measured HR, the breath bar breathes at the measured RR, alarms pulse.
-   Durations are set inline from live values. All of it stops for
-   prefers-reduced-motion, and stops when a value goes stale.              */
-@keyframes beat {
-  0%, 100% { transform: scale(1); opacity: .55; }
-  12% { transform: scale(1.35); opacity: 1; }
-  30% { transform: scale(1); opacity: .7; }
-}
-@keyframes breathe {
-  0%, 100% { transform: scaleX(.18); }
-  45% { transform: scaleX(1); }
-}
-@keyframes alarm-pulse {
-  0%, 100% { box-shadow: 0 0 0 0 var(--pulse-color, transparent); }
-  50% { box-shadow: 0 0 0 4px var(--pulse-color, transparent); }
-}
+   Only motion that carries information: the HR dot beats at the measured
+   rate, the RR bar breathes at the measured rate, active alarms pulse.
+   All of it stops for prefers-reduced-motion and when a value goes stale.  */
+@keyframes beat { 0%, 100% { transform: scale(1); opacity: .5; } 12% { transform: scale(1.4); opacity: 1; } 30% { transform: scale(1); opacity: .7; } }
+@keyframes breathe { 0%, 100% { transform: scaleX(.18); } 45% { transform: scaleX(1); } }
+@keyframes alarm-pulse { 0%, 100% { box-shadow: 0 0 0 0 var(--pulse-color, transparent); } 50% { box-shadow: 0 0 0 4px var(--pulse-color, transparent); } }
+@keyframes rec { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }
 .beat { animation: beat var(--period, 1s) ease-out infinite; transform-origin: center; }
 .breathe { animation: breathe var(--period, 4s) ease-in-out infinite; transform-origin: left center; }
 .alarm-pulse { animation: alarm-pulse 1.2s ease-in-out infinite; }
-
+.rec-dot { animation: rec 1.6s ease-in-out infinite; }
 @media (prefers-reduced-motion: reduce) {
-  .beat, .breathe, .alarm-pulse { animation: none !important; }
+  .beat, .breathe, .alarm-pulse, .rec-dot { animation: none !important; }
   .breathe { transform: scaleX(.6); }
 }
 
-/* hairline-structured panel: structure from rules, not shadows */
-.panel {
-  background: var(--panel);
-  border: 1px solid var(--hairline);
-  border-radius: 12px;
-}
-.rule-t { border-top: 1px solid var(--hairline); }
-.rule-b { border-bottom: 1px solid var(--hairline); }
+/* ------------------------------------------------------------------ surfaces */
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; }
+.card-pad { padding: 18px 20px; }
+.well { background: var(--surface-2); border-radius: 8px; }
+.rule-t { border-top: 1px solid var(--line); }
+.rule-b { border-bottom: 1px solid var(--line); }
+.rule-l { border-left: 1px solid var(--line); }
+.hatch { background-image: repeating-linear-gradient(135deg, color-mix(in srgb, var(--mute) 16%, transparent) 0 2px, transparent 2px 7px); }
 
-/* stale / unavailable values: hatched, dimmed, never mistaken for live */
-.stale-hatch {
-  background-image: repeating-linear-gradient(135deg, rgba(110,133,130,.14) 0 2px, transparent 2px 7px);
-}
+.band-amber { background: var(--amber-bg); border-color: var(--amber-line); color: var(--amber-ink); }
+.band-red   { background: var(--red-bg);   border-color: var(--red-line);   color: var(--red-ink); }
 
+/* ------------------------------------------------------------------ controls */
 .btn {
-  display: inline-flex; align-items: center; gap: .5rem;
-  height: 36px; padding: 0 14px; border-radius: 8px;
-  font: 600 14px/1 "Barlow Semi Condensed", Barlow, sans-serif;
-  border: 1px solid var(--hairline-strong); color: var(--ink); background: var(--raised);
-  transition: background-color .12s ease, border-color .12s ease;
-  cursor: pointer; white-space: nowrap;
+  display: inline-flex; align-items: center; justify-content: center; gap: .5rem;
+  min-height: 40px; padding: 0 14px; border-radius: 8px;
+  font: 600 14.5px/1 'IBM Plex Sans Condensed', system-ui, sans-serif; letter-spacing: .01em;
+  border: 1px solid var(--line-strong); color: var(--ink); background: var(--surface-2);
+  transition: background-color .15s ease, border-color .15s ease, color .15s ease;
+  cursor: pointer; white-space: nowrap; text-decoration: none;
 }
-.btn:hover { background: #22383f; border-color: #3d575e; }
+.btn:hover { background: var(--surface-3); }
 .btn:disabled { opacity: .45; cursor: not-allowed; }
-.btn-primary { background: var(--scrub); border-color: var(--scrub); color: #06262a; }
-.btn-primary:hover { background: #79d4dc; border-color: #79d4dc; }
+.btn-sm { min-height: 34px; padding: 0 10px; font-size: 13.5px; }
+.btn-primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+.btn-primary:hover { background: color-mix(in srgb, var(--accent) 86%, var(--bg)); }
 .btn-ghost { background: transparent; border-color: transparent; color: var(--ink-2); }
-.btn-ghost:hover { background: var(--raised); color: var(--ink); }
-.btn-danger { background: var(--red); border-color: var(--red); color: #2a0509; }
-.btn-danger:hover { background: #ff6d7a; border-color: #ff6d7a; }
+.btn-ghost:hover { background: var(--surface-2); color: var(--ink); }
+.btn-red { background: var(--red); border-color: var(--red); color: #1b0605; }
+.btn-red:hover { background: color-mix(in srgb, var(--red) 85%, white); }
+.btn-amber { background: var(--amber); border-color: var(--amber); color: #1d0f02; }
+.btn-amber:hover { background: color-mix(in srgb, var(--amber) 85%, white); }
+
+.field { display: flex; flex-direction: column; gap: 6px; }
+.field > span { font: 400 13.5px/1.3 'Atkinson Hyperlegible', sans-serif; color: var(--ink-2); }
+.input {
+  min-height: 40px; padding: 0 12px; border-radius: 8px; width: 100%;
+  background: var(--bg); border: 1px solid var(--line-strong); color: var(--ink);
+  font: 400 15px/1.2 'Atkinson Hyperlegible', sans-serif;
+}
+.input:focus-visible { outline: 2px solid var(--ink); outline-offset: 1px; }
+textarea.input { padding: 10px 12px; min-height: 72px; resize: vertical; line-height: 1.45; }
+
+.seg { display: inline-flex; padding: 3px; gap: 2px; border-radius: 9px; background: var(--surface-2); border: 1px solid var(--line); }
+.seg > button { min-height: 32px; padding: 0 12px; border-radius: 6px; color: var(--ink-2);
+  font: 600 13.5px/1 'IBM Plex Sans Condensed', sans-serif; cursor: pointer; transition: background-color .15s, color .15s; }
+.seg > button:hover { color: var(--ink); }
+.seg > button[aria-checked='true'], .seg > button[aria-selected='true'] { background: var(--surface); color: var(--ink);
+  box-shadow: 0 0 0 1px var(--line-strong); }
+
+.chip { display: inline-flex; align-items: center; gap: 6px; height: 26px; padding: 0 9px; border-radius: 6px;
+  border: 1px solid var(--line-strong); color: var(--ink-2); font: 400 12.5px/1 'Atkinson Hyperlegible', sans-serif;
+  white-space: nowrap; }
+.chip svg { width: 14px; height: 14px; }
+
+table.data { width: 100%; border-collapse: collapse; }
+table.data th { font: 600 12px/1.2 'IBM Plex Sans Condensed', sans-serif; letter-spacing: .06em; text-transform: uppercase;
+  color: var(--mute); text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); }
+table.data td { padding: 9px 10px; border-bottom: 1px solid var(--line); font-size: 14px; vertical-align: middle; }
+table.data tr:last-child td { border-bottom: none; }
+table.data .num { text-align: right; font-variant-numeric: tabular-nums; }
+
+/* utilities last, so layout utilities (hidden, flex-row, w-*) always beat the component classes above */
+@tailwind utilities;

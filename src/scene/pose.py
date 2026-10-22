@@ -230,7 +230,7 @@ def load_pose_estimator(config_path: str | Path = "config/models.yaml") -> PoseE
 
         checkpoints:
           pose:
-            yolo_pose: "models/public/yolo11n-pose.pt"
+            yolo_pose: "models/public/yolov8n-pose.pt"
         modules:
           pose: { conf: 0.25, iou: 0.45, img_size: 640 }   # optional
         device: "cuda"                                       # top-level, shared

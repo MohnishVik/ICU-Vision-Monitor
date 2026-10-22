@@ -30,8 +30,41 @@ export interface Vital {
   unit: string;
   reason: string | null;      // why value is null: no_valid_input | paths_disagree | warming_up
   subscore: number | null;    // NEWS2 sub-score
-  sources: Record<string, Measurement | null>;
+  sources: Record<string, SourceReading>;
+  learned_fused: boolean;
   apnea?: boolean;
+}
+
+/** A source's reading plus whether it feeds the fused value or is shown alongside it. */
+export interface SourceReading extends Measurement {
+  role: 'fused' | 'display';
+}
+
+export interface PainInfo {
+  available: boolean;
+  experimental: boolean;
+  state?: ModuleState;
+  reason?: string | null;
+  probability?: number | null;     // mean P(pain expression) over the last few seconds
+  probability_raw?: number | null;
+  threshold?: number | null;
+  pain_detected?: boolean | null;
+  sqi?: number;
+  stale?: boolean;
+  model?: string;
+  trained_on?: string;
+}
+
+export interface SessionStatus {
+  active: boolean;
+  id?: string;
+  label?: string;
+  condition?: string;
+  started?: number;
+  rows?: number;
+  elapsed_s?: number;
+  reference?: { rr: number | null; hr: number | null };
+  error?: string | null;
 }
 
 export interface EWS {
@@ -172,7 +205,8 @@ export interface PatientSnapshot {
   ews: EWS | null;
   fall: FallInfo | null;
   taa: TAAInfo | null;
-  pain: { available: boolean; reason?: string };
+  pain: PainInfo;
+  session: SessionStatus | null;
   scene: Scene;
   alarms: Alarm[];
   alarm_history: Alarm[];
@@ -211,6 +245,8 @@ export interface PatientSummary {
   };
   alarm_count: number;
   top_alarm: Alarm | null;
+  pain: { available: boolean | null; probability: number | null; pain_detected: boolean | null };
+  recording: boolean;
 }
 
 export interface History {
@@ -224,6 +260,53 @@ export interface History {
   ews: (number | null)[];
   fall: (number | null)[];
   taa: (boolean | null)[];
+  pain: (number | null)[];
+  sources: Record<string, (number | null)[]>;
+}
+
+export interface ModelFile {
+  file: string;
+  used_by: string;
+  required: boolean;
+  present: boolean;
+  size_bytes: number | null;
+}
+
+export interface ModelsReport { mode: string; files: ModelFile[]; missing_required: string[] }
+
+export interface SessionMeta {
+  id: string;
+  patient_id: string;
+  label: string;
+  condition: string;
+  notes: string;
+  started: number;
+  ended: number | null;
+  rows: number;
+  simulated: boolean;
+  mode: string;
+  fuse_learned: boolean;
+  sources: string[];
+}
+
+export interface SourceScore {
+  n_scored: number;
+  coverage: number | null;
+  mae: number | null;
+  rmse: number | null;
+  bias: number | null;
+  within_tol: number | null;
+  tolerance: number;
+  pearson_r: number | null;
+  mae_unfiltered: number | null;
+  coverage_unfiltered: number | null;
+}
+
+export interface SessionReport {
+  session: Partial<SessionMeta>;
+  settings: { warmup_s: number; settle_s: number; tolerance: Record<VitalKey, number> };
+  rr: Record<string, SourceScore>;
+  hr: Record<string, SourceScore>;
 }
 
 export interface Health {

@@ -58,6 +58,8 @@ def summarize(snap: dict) -> dict:
                   "lighting": scene.get("lighting")},
         "alarm_count": len([a for a in open_alarms if a.get("state") == "active"]),
         "top_alarm": top,
+        "pain": {k: (snap.get("pain") or {}).get(k) for k in ("available", "probability", "pain_detected")},
+        "recording": bool((snap.get("session") or {}).get("active")),
     }
 
 

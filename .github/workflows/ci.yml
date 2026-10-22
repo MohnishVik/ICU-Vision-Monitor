@@ -28,7 +28,7 @@ jobs:
         with:
           python-version: "3.10"
       - run: pip install pytest httpx numpy scipy pyyaml "fastapi>=0.109" "uvicorn[standard]>=0.27" opencv-python-headless
-      - run: pytest tests/test_ews_scoring.py tests/test_fusion.py tests/test_serving.py -v
+      - run: pytest tests/test_ews_scoring.py tests/test_fusion.py tests/test_serving.py tests/test_wiring.py tests/test_sessions.py -v
 
   frontend-build:
     runs-on: ubuntu-latest

@@ -38,7 +38,7 @@ export default function StreamPanel({ snap }: { snap: PatientSnapshot }) {
     !!kp && Array.isArray(kp[i]) && kp[i].length === 2 && (!conf || (conf[i] ?? 0) >= 0.3);
 
   return (
-    <figure className="panel overflow-hidden m-0">
+    <figure className="card overflow-hidden m-0">
       <div className="relative bg-black" style={{ aspectRatio: `${w} / ${h}` }}>
         {!offline && !broken && (
           <img
@@ -55,8 +55,8 @@ export default function StreamPanel({ snap }: { snap: PatientSnapshot }) {
             {scene?.chair && (
               <polygon
                 points={scene.chair.map((p) => p.join(',')).join(' ')}
-                fill="rgba(92,198,208,.08)"
-                stroke="var(--scrub)"
+                fill="color-mix(in srgb, var(--ink) 7%, transparent)"
+                stroke="var(--ink)"
                 strokeWidth={2}
                 vectorEffect="non-scaling-stroke"
               />
@@ -66,7 +66,7 @@ export default function StreamPanel({ snap }: { snap: PatientSnapshot }) {
                 <rect x={b[0]} y={b[1]} width={b[2] - b[0]} height={b[3] - b[1]} rx={6}
                       fill="none" stroke="var(--mute)" strokeWidth={1.5} vectorEffect="non-scaling-stroke" />
                 <text x={b[0] + 6} y={b[1] + 18} fill="var(--ink-2)" fontSize={14}
-                      fontFamily="Barlow Semi Condensed">Staff</text>
+                      fontFamily="IBM Plex Sans Condensed">Staff</text>
               </g>
             ))}
             {scene?.thermal_registered && scene?.nostril_box && (
@@ -74,10 +74,10 @@ export default function StreamPanel({ snap }: { snap: PatientSnapshot }) {
                 <rect x={scene.nostril_box[0]} y={scene.nostril_box[1]}
                       width={scene.nostril_box[2] - scene.nostril_box[0]}
                       height={scene.nostril_box[3] - scene.nostril_box[1]} rx={3}
-                      fill="rgba(194,174,255,.12)" stroke="var(--rr)" strokeWidth={2}
+                      fill="color-mix(in srgb, var(--rr) 14%, transparent)" stroke="var(--rr)" strokeWidth={2}
                       vectorEffect="non-scaling-stroke" />
                 <text x={scene.nostril_box[2] + 6} y={scene.nostril_box[3]} fill="var(--rr)" fontSize={13}
-                      fontFamily="Barlow Semi Condensed">Breathing</text>
+                      fontFamily="IBM Plex Sans Condensed">Breathing</text>
               </g>
             )}
             {kp && (
@@ -109,7 +109,7 @@ export default function StreamPanel({ snap }: { snap: PatientSnapshot }) {
         {needsSetup && (
           <div className="absolute inset-x-0 bottom-0 p-4 bg-gradient-to-t from-black/80 to-transparent">
             <div className="flex flex-wrap items-center justify-between gap-3">
-              <p className="t-lead text-ink">Mark the chair before monitoring starts.</p>
+              <p className="t-body text-ink">Mark the chair before monitoring starts.</p>
               <Link to={`/patients/${encodeURIComponent(snap.patient_id)}/calibrate`} className="btn btn-primary">
                 <Crosshair className="h-4 w-4" aria-hidden /> Set up chair
               </Link>
@@ -136,7 +136,7 @@ export default function StreamPanel({ snap }: { snap: PatientSnapshot }) {
             </span>
           )}
         </span>}
-        {snap.simulated && <span className="t-micro text-[#d8ccff]">Simulated feed, no camera</span>}
+        {snap.simulated && <span className="t-micro text-ink2">Simulated feed, no camera</span>}
         <span className="t-micro text-mute ml-auto tnum">
           {snap.metrics?.fps ? `${snap.metrics.fps} fps` : ''}
           {snap.metrics?.latency_ms ? `  ${Math.round(snap.metrics.latency_ms)} ms per frame` : ''}
