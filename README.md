@@ -13,8 +13,7 @@ respiratory-cardiac early-warning score that explains itself, fall detection, br
 synchrony, and escalating alarms. A built-in record-and-compare workflow scores every
 estimator, including the experimental learned models, against reference values you trust.
 
-> **Research prototype.** VisionICU is not a certified medical device and must not be used
-> for clinical decisions. It does not replace standard bedside monitoring.
+> **Research prototype.** 
 
 ---
 
