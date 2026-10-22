@@ -3,8 +3,11 @@ state.py — per-patient vitals pipeline + JSON-safe snapshots for the API.
 
 VitalsPipeline is the per-patient "brain" between the modules and the UI:
 
-    raw module Measurements (rr.depth, rr.thermal, hr.pos, fall.classifier, taa.depth)
+    raw module Measurements (rr.depth, rr.thermal, hr.pos, fall.classifier, taa.depth,
+                             pain.mobilenetv3, and the learned rr.cnn_* / hr.efficientphys)
         -> inverse-variance fusion (SQI gate + agreement gate)     src/fusion/inv_variance.py
+           learned paths join fusion only when signal.yaml learned.fuse is true;
+           otherwise they are shown and logged next to the fused value ("display")
         -> Kalman smoothing (slew-limited, TAA-aware)              src/fusion/kalman_filter.py
         -> trends (5/15/60/240 min)                               src/fusion/trend.py
         -> EWS sub-score + alarm state machine + explanation       src/fusion/alarm_fsm.py
@@ -122,13 +125,20 @@ def patient_state(scene: SceneInfo, fall_state: Optional[int]) -> str:
 # The per-patient pipeline
 # --------------------------------------------------------------------------- #
 class VitalsPipeline:
-    RR_SOURCES = ("rr.depth", "rr.thermal")
-    HR_SOURCES = ("hr.pos",)
+    RR_BASE = ("rr.depth", "rr.thermal")
+    HR_BASE = ("hr.pos",)
+    RR_LEARNED = ("rr.cnn_lbrd", "rr.cnn_d435")
+    HR_LEARNED = ("hr.efficientphys",)
+    PAIN_SOURCE = "pain.mobilenetv3"
+    ALL_SOURCES = RR_BASE + RR_LEARNED + HR_BASE + HR_LEARNED
 
     def __init__(self, patient_id: str, label: str, rules: dict, signal_cfg: Optional[dict] = None,
                  mode: str = "camera", simulated: bool = False, stale_s: float = 5.0,
                  history_s: float = 4 * 3600.0, sample_period_s: float = 1.0):
         sig = signal_cfg or {}
+        self.learned_fused = bool((sig.get("learned") or {}).get("fuse", False))
+        self.RR_SOURCES = self.RR_BASE + (self.RR_LEARNED if self.learned_fused else ())
+        self.HR_SOURCES = self.HR_BASE + (self.HR_LEARNED if self.learned_fused else ())
         self.patient_id, self.label, self.mode, self.simulated = patient_id, label, mode, simulated
         self.rr_fuse = FusionConfig(
             sqi_min=float(((sig.get("rr") or {}).get("quality") or {}).get("peak_power_frac_min", 0.30)),
@@ -164,6 +174,7 @@ class VitalsPipeline:
         self.status, self.status_detail = "starting", ""
         self.metrics: Dict[str, Any] = {"fps": 0.0, "latency_ms": 0.0}
         self.scene = SceneInfo()
+        self.recorder = None                         # SessionRecorder while a session is recorded
 
     # ------------------------------------------------------------------ step --
     def step(self, now: float, raw: Dict[str, Measurement], scene: SceneInfo) -> None:
@@ -171,7 +182,7 @@ class VitalsPipeline:
         for src, m in raw.items():
             self._latest[src], self._latest_at[src] = m, now
 
-        rr_new = any(s in raw for s in self.RR_SOURCES)
+        rr_new = any(s in raw for s in self.RR_SOURCES)      # only fused sources move the vital
         hr_new = any(s in raw for s in self.HR_SOURCES)
         taa_m = self._fresh("taa.depth", now)
         taa_flag = bool(taa_m is not None and taa_m.meta.get("taa_flag"))
@@ -220,6 +231,7 @@ class VitalsPipeline:
             alarm_history = list(self.alarms.history[:10])
             actionable = self.alarms.actionable_this_shift(now)
 
+        pain_m = self._fresh(self.PAIN_SOURCE, now)
         if now - self._last_sample >= self.sample_period_s:
             self._last_sample = now
             self._hist.append({
@@ -227,16 +239,22 @@ class VitalsPipeline:
                 "rr_sqi": self._rr_out.sqi if self._rr_out is not None else None,
                 "hr_sqi": self._hr_out.sqi if self._hr_out is not None else None,
                 "ews": ews.total, "fall": fall_state, "taa": taa_flag,
+                "pain": pain_m.value if pain_m is not None else None,
+                "sources": {s: (m.value if (m := self._fresh(s, now)) is not None else None)
+                            for s in self.ALL_SOURCES},
             })
+            rec = self.recorder
+            if rec is not None:
+                self._record(rec, now, rr_val, hr_val, ews.total, pain_m)
 
         snap = {
             "patient_id": self.patient_id, "label": self.label, "mode": self.mode,
             "simulated": self.simulated, "ts": now, "status": self.status,
             "status_detail": self.status_detail,
             "vitals": {
-                "rr": self._vital_dict("rr", rr_val, self._rr_out, self.RR_SOURCES, now, ews,
+                "rr": self._vital_dict("rr", rr_val, self._rr_out, self.RR_BASE + self.RR_LEARNED, now, ews,
                                        extra={"apnea": apnea}),
-                "hr": self._vital_dict("hr", hr_val, self._hr_out, self.HR_SOURCES, now, ews),
+                "hr": self._vital_dict("hr", hr_val, self._hr_out, self.HR_BASE + self.HR_LEARNED, now, ews),
             },
             "ews": {**ews.to_dict(), "explanation": explanation},
             "fall": {
@@ -256,9 +274,8 @@ class VitalsPipeline:
                 "stale": taa_m is None,
                 "reason": to_jsonable(taa_m.meta.get("reason")) if taa_m is not None else None,
             },
-            "pain": {"available": False,
-                     "reason": "Pain module pending: src/modules/pain.py is a scaffold "
-                               "(needs SynPAIN weights + AU extraction)."},
+            "pain": self._pain_dict(pain_m),
+            "session": self.recorder.status() if self.recorder is not None else None,
             "scene": to_jsonable(scene.__dict__),
             "alarms": [a.to_dict() for a in open_alarms],
             "alarm_history": [a.to_dict() for a in alarm_history],
@@ -297,6 +314,7 @@ class VitalsPipeline:
     def _vital_dict(self, key: str, value: Optional[float], fused: Optional[Measurement],
                     sources, now: float, ews, extra: Optional[dict] = None) -> dict:
         age = self.watch.age(key, now)
+        fused_set = set(self.RR_SOURCES if key == "rr" else self.HR_SOURCES)
         return {
             "value": value,
             "raw": fused.value if fused is not None else None,
@@ -307,9 +325,48 @@ class VitalsPipeline:
             "reason": (fused.meta.get("reason") if fused is not None and fused.value is None
                        else (None if fused is not None else "warming_up")),
             "subscore": ews.subscores.get(key),
-            "sources": {s: measurement_dict(self._fresh(s, now)) for s in sources},
+            "sources": {s: {**d, "role": "fused" if s in fused_set else "display"}
+                        for s in sources if (d := measurement_dict(self._fresh(s, now))) is not None},
+            "learned_fused": self.learned_fused,
             **(extra or {}),
         }
+
+    def _record(self, rec, now: float, rr_val, hr_val, ews_total, pain_m) -> None:
+        """Hand one 1 Hz sample to the session recorder. A disk error stops the recording,
+        never the monitoring."""
+        srcs, sqi, unf = {}, {}, {}
+        for s in self.ALL_SOURCES:
+            m = self._fresh(s, now)
+            srcs[s] = m.value if m is not None else None
+            sqi[s] = float(m.sqi) if m is not None else None
+            meta = (m.meta or {}) if m is not None else {}
+            unf[s] = meta.get("raw_output", meta.get("rate_unfiltered"))
+        try:
+            rec.write({"t": now, "rr": rr_val, "hr": hr_val, "ews": ews_total,
+                       "pain": pain_m.value if pain_m is not None else None,
+                       "sources": srcs, "sqi": sqi, "unfiltered": unf})
+        except Exception as exc:  # noqa: BLE001
+            rec.error = f"{type(exc).__name__}: {exc}"
+            try:
+                rec.stop()
+            finally:
+                self.recorder = None
+
+    def _pain_dict(self, m: Optional[Measurement]) -> dict:
+        """Pain is experimental: shown as a probability, never scored or alarmed on."""
+        mod = self.modules.get("pain") or {}
+        if m is None:
+            reason = mod.get("detail") or ("Pain module not loaded." if mod.get("state") != "ok"
+                                           else "Waiting for a face.")
+            return {"available": False, "reason": reason, "experimental": True,
+                    "state": mod.get("state", "unavailable")}
+        meta = m.meta or {}
+        return {"available": True, "experimental": True, "probability": m.value,
+                "probability_raw": meta.get("probability_raw"), "threshold": meta.get("threshold"),
+                "pain_detected": bool(meta.get("pain_detected")) if m.value is not None else None,
+                "sqi": float(m.sqi), "stale": False, "reason": meta.get("reason"),
+                "model": meta.get("model", "mobilenet_v3_small"),
+                "trained_on": meta.get("trained_on", "SynPAIN"), "state": mod.get("state", "ok")}
 
     # ---------------------------------------------------------------- reads --
     def snapshot(self) -> dict:
@@ -343,9 +400,11 @@ class VitalsPipeline:
         if len(pts) > max_points:
             step = len(pts) / float(max_points)
             pts = [pts[int(i * step)] for i in range(max_points)]
-        keys = ("t", "rr", "hr", "rr_sqi", "hr_sqi", "ews", "fall", "taa")
+        keys = ("t", "rr", "hr", "rr_sqi", "hr_sqi", "ews", "fall", "taa", "pain")
         return to_jsonable({"patient_id": self.patient_id, "minutes": minutes,
-                            **{k: [p.get(k) for p in pts] for k in keys}})
+                            **{k: [p.get(k) for p in pts] for k in keys},
+                            "sources": {s: [(p.get("sources") or {}).get(s) for p in pts]
+                                        for s in self.ALL_SOURCES}})
 
     def acknowledge(self, alarm_id: Optional[int] = None) -> int:
         with self._alarm_lock:

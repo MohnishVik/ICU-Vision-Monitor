@@ -126,7 +126,7 @@ export default function ThermalAlign() {
 
       <div className="grid gap-5 lg:grid-cols-12">
         <div className="lg:col-span-8 flex flex-col gap-4 min-w-0">
-          <p className="t-lead text-ink" aria-live="polite">{prompt}</p>
+          <p className="t-body text-ink" aria-live="polite">{prompt}</p>
           {snap ? (
             <div className="grid gap-4 sm:grid-cols-2">
               <figure className="m-0 flex flex-col gap-2">
@@ -137,10 +137,10 @@ export default function ThermalAlign() {
                        onPointerDown={onRgb} role="img" aria-label="Colour image: click the mug">
                     {markers('rgb').map((m, i) => (
                       <g key={i} opacity={m.pending ? 0.75 : 1}>
-                        <circle cx={m.x} cy={m.y} r={r} fill="var(--scrub)" stroke="#06262a" strokeWidth={1.5}
+                        <circle cx={m.x} cy={m.y} r={r} fill="var(--ink)" stroke="var(--bg)" strokeWidth={1.5}
                                 vectorEffect="non-scaling-stroke" />
                         <text x={m.x} y={m.y} dy="0.36em" textAnchor="middle" fontSize={r * 1.2}
-                              fontFamily="Barlow Condensed" fontWeight={600} fill="#06262a">{m.label}</text>
+                              fontFamily="IBM Plex Sans Condensed" fontWeight={600} fill="var(--bg)">{m.label}</text>
                       </g>
                     ))}
                   </svg>
@@ -155,7 +155,7 @@ export default function ThermalAlign() {
               </figure>
             </div>
           ) : (
-            <div className="panel p-8 grid place-items-center text-center">
+            <div className="card p-8 grid place-items-center text-center">
               <div className="flex flex-col items-center gap-3 max-w-[46ch]">
                 <Camera className="h-8 w-8 text-mute" aria-hidden />
                 <p className="t-body text-ink2">Hold the mug in view, then take a snapshot of both cameras at the same moment.</p>
@@ -167,7 +167,7 @@ export default function ThermalAlign() {
           )}
 
           {justSaved && status?.registered && (
-            <section className="panel p-5 flex flex-col gap-3" aria-labelledby="check-h">
+            <section className="card card-pad flex flex-col gap-3" aria-labelledby="check-h">
               <h2 id="check-h" className="t-head">Check the alignment</h2>
               <p className="t-label text-ink2 max-w-[64ch]">
                 The thermal image is now drawn on top of the colour image. Warm areas (face, hands, the mug)
@@ -181,7 +181,7 @@ export default function ThermalAlign() {
         </div>
 
         <aside className="lg:col-span-4 flex flex-col gap-5">
-          <section className="panel p-5 flex flex-col gap-3" aria-labelledby="how-h">
+          <section className="card card-pad flex flex-col gap-3" aria-labelledby="how-h">
             <h2 id="how-h" className="t-head">How to align</h2>
             <ol className="flex flex-col gap-2 t-label text-ink2 list-decimal pl-5 max-w-[46ch]">
               <li>Fill a mug with hot water and hold it at about the patient's distance from the camera.</li>
@@ -195,7 +195,7 @@ export default function ThermalAlign() {
             </p>
           </section>
 
-          <section className="panel p-5 flex flex-col gap-3" aria-labelledby="pairs-h">
+          <section className="card card-pad flex flex-col gap-3" aria-labelledby="pairs-h">
             <div className="flex items-baseline gap-2">
               <h2 id="pairs-h" className="t-head">Marked points</h2>
               <span className="t-micro text-mute tnum ml-auto">
@@ -208,7 +208,7 @@ export default function ThermalAlign() {
               <ul className="flex flex-col">
                 {pairs.map((p, i) => (
                   <li key={i} className="flex items-center gap-3 py-1.5 rule-b last:border-b-0 t-label tnum">
-                    <span className="h-6 w-6 rounded-full bg-scrub text-[#06262a] grid place-items-center t-micro font-semibold">{i + 1}</span>
+                    <span className="h-6 w-6 rounded-full bg-ink text-[var(--bg)] grid place-items-center t-micro font-semibold">{i + 1}</span>
                     <span className="text-ink2 flex-1">
                       colour {Math.round(p.rgb[0])}, {Math.round(p.rgb[1])} &nbsp;thermal {p.thermal[0].toFixed(1)}, {p.thermal[1].toFixed(1)}
                     </span>
@@ -236,7 +236,7 @@ export default function ThermalAlign() {
             {error && <p className="t-label text-red" role="alert">{error}</p>}
           </section>
 
-          <section className="panel p-5 flex flex-col gap-2" aria-labelledby="cur-h">
+          <section className="card card-pad flex flex-col gap-2" aria-labelledby="cur-h">
             <h2 id="cur-h" className="t-head">Current alignment</h2>
             {status?.registered ? (
               <>

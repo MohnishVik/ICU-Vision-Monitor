@@ -3,7 +3,7 @@ import { CircleCheck, CircleDashed, CircleX, Hourglass, TriangleAlert } from 'lu
 import { MODULE_TEXT } from '../lib/format';
 import type { ModuleStatus } from '../types';
 
-const ORDER = ['pose', 'rr', 'hr', 'fall', 'taa', 'pain'];
+const ORDER = ['pose', 'rr', 'rr_learned', 'hr', 'hr_learned', 'fall', 'taa', 'pain'];
 
 const ICON = {
   ok: <CircleCheck className="h-4 w-4 text-ink2" aria-hidden />,

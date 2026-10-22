@@ -97,7 +97,7 @@ export default function Calibrate() {
       </header>
 
       <div className="grid gap-5 lg:grid-cols-12">
-        <div className="lg:col-span-8 panel overflow-hidden">
+        <div className="lg:col-span-8 card overflow-hidden">
           <div className="relative bg-black" style={{ aspectRatio: size ? `${size.w} / ${size.h}` : '4 / 3' }}>
             {!imgError ? (
               <img key={nonce} src={`${urls.calibrationFrame(id)}?n=${nonce}`} alt="Still camera frame for marking the seat, faces blurred"
@@ -128,8 +128,8 @@ export default function Calibrate() {
                 )}
                 {pts.length >= 2 && (
                   <polygon points={pts.map((p) => p.join(',')).join(' ')}
-                           fill={pts.length === 4 ? 'rgba(92,198,208,.16)' : 'none'}
-                           stroke="var(--scrub)" strokeWidth={2} vectorEffect="non-scaling-stroke" />
+                           fill={pts.length === 4 ? 'color-mix(in srgb, var(--ink) 12%, transparent)' : 'none'}
+                           stroke="var(--ink)" strokeWidth={2} vectorEffect="non-scaling-stroke" />
                 )}
                 {pts.map((p, i) => (
                   <g key={i} tabIndex={0} role="button" aria-label={`Corner ${i + 1}. Drag or use arrow keys to move, Delete to remove.`}
@@ -137,10 +137,10 @@ export default function Calibrate() {
                      onPointerDown={(e) => { e.stopPropagation(); (e.target as Element).setPointerCapture?.(e.pointerId); setDrag(i); }}
                      className="cursor-grab focus:outline-none">
                     <circle cx={p[0]} cy={p[1]} r={r * 1.8} fill="transparent" />
-                    <circle cx={p[0]} cy={p[1]} r={r} fill="var(--scrub)" stroke="#06262a" strokeWidth={2}
+                    <circle cx={p[0]} cy={p[1]} r={r} fill="var(--ink)" stroke="var(--bg)" strokeWidth={2}
                             vectorEffect="non-scaling-stroke" />
                     <text x={p[0]} y={p[1]} dy="0.35em" textAnchor="middle" fontSize={r * 1.15}
-                          fontFamily="Barlow Condensed" fontWeight={600} fill="#06262a">{i + 1}</text>
+                          fontFamily="IBM Plex Sans Condensed" fontWeight={600} fill="var(--bg)">{i + 1}</text>
                   </g>
                 ))}
               </svg>
@@ -149,7 +149,7 @@ export default function Calibrate() {
         </div>
 
         <aside className="lg:col-span-4 flex flex-col gap-5">
-          <section className="panel p-5 flex flex-col gap-4">
+          <section className="card card-pad flex flex-col gap-4">
             <p className="t-body text-ink max-w-[46ch]">
               {remaining > 0
                 ? `Click the ${remaining === 4 ? 'four corners' : `${remaining} remaining ${remaining === 1 ? 'corner' : 'corners'}`} of the seat, in any order.`
@@ -160,10 +160,10 @@ export default function Calibrate() {
               this area and uses its depth as the floor reference for falls.
             </p>
 
-            <div role="radiogroup" aria-label="Furniture type" className="inline-flex w-fit rounded-lg border border-hairline p-0.5">
+            <div role="radiogroup" aria-label="Furniture type" className="inline-flex w-fit rounded-lg border border-line p-0.5">
               {(['chair', 'bed'] as const).map((l) => (
                 <button key={l} type="button" role="radio" aria-checked={label === l} onClick={() => setLabel(l)}
-                        className={`h-8 px-4 rounded-md t-label capitalize ${label === l ? 'bg-raised text-ink' : 'text-ink2 hover:text-ink'}`}>
+                        className={`h-8 px-4 rounded-md t-label capitalize ${label === l ? 'bg-surface2 text-ink' : 'text-ink2 hover:text-ink'}`}>
                   {l}
                 </button>
               ))}

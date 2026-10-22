@@ -2,24 +2,13 @@
 # Runtime prefers finetuned weights; falls back to public if file absent
 
 checkpoints:
-  rr:
-    public:    "models/public/rr_tcn_lbrdic.pth"
-    finetuned: "models/finetuned/rr_tcn_finetuned.pth"
-    onnx:      "models/onnx/rr_tcn.onnx"
-  hr:
-    public:    "models/public/hr_efficientphys_ubfc.pth"
-    finetuned: "models/finetuned/hr_efficientphys_finetuned.pth"
-    onnx:      "models/onnx/hr_efficientphys.onnx"
-  fall:
-    public:    "models/public/fall_model_public.pt"
-    finetuned: "models/finetuned/fall_model_finetuned.pt"
-  pain:
-    xgboost:   "models/public/pain_xgboost_synpain.joblib"
-    deepmlp:   "models/finetuned/pain_deepmlp_synpain.pth"
-    tcn:       "models/finetuned/pain_temporal_tcn.pth"   # PENDING — absent = auto-skip
-    onnx:      "models/onnx/pain_deepmlp.onnx"
   pose:
     yolo_pose: "models/public/yolov8n-pose.pt"            # pretrained, never retrained
+  # The other weight paths live next to the code that loads them, in config/signal.yaml:
+  #   fall.gru_weights_primary / fall.gru_weights_fallback   (fall GRU)
+  #   pain.weights                                           (MobileNetV3, experimental)
+  #   learned.rr_lbrd / learned.rr_d435 / learned.hr_efficientphys (learned RR/HR, experimental)
+  # The System page and `python main.py` list every expected file and whether it is present.
 
 # Module feature toggles
 modules:

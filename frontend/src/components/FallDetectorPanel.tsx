@@ -18,13 +18,13 @@ function PostureStrip({ history }: { history: History | null }) {
     <div className="flex flex-col gap-1.5">
       <svg viewBox={`0 0 ${n} 10`} preserveAspectRatio="none" className="w-full h-3 rounded-sm overflow-hidden"
            role="img" aria-label="Posture over the selected window">
-        <rect x={0} y={0} width={n} height={10} fill="var(--raised)" />
+        <rect x={0} y={0} width={n} height={10} fill="var(--surface-2)" />
         {vals.map((v, i) => (v === 1 || v === 2) && (
           <rect key={i} x={i} y={0} width={1.02} height={10} fill={v === 2 ? 'var(--red)' : 'var(--amber)'} />
         ))}
       </svg>
       <div className="flex gap-4 t-micro text-mute">
-        <span className="inline-flex items-center gap-1.5"><i className="h-2 w-3 rounded-sm bg-raised" />Normal</span>
+        <span className="inline-flex items-center gap-1.5"><i className="h-2 w-3 rounded-sm bg-surface2" />Normal</span>
         <span className="inline-flex items-center gap-1.5"><i className="h-2 w-3 rounded-sm bg-amber" />Falling</span>
         <span className="inline-flex items-center gap-1.5"><i className="h-2 w-3 rounded-sm bg-red" />Lying</span>
       </div>
@@ -43,12 +43,12 @@ export default function FallDetectorPanel({ fall, scene, history }: {
   const frac = scene?.in_chair_frac ?? 0;
 
   return (
-    <section className="panel p-5 flex flex-col gap-4" aria-labelledby="fall-h">
+    <section className="card card-pad flex flex-col gap-4" aria-labelledby="fall-h">
       <h2 id="fall-h" className="t-head">Position and falls</h2>
       <div className="flex items-center gap-3">
         <Icon className={`h-7 w-7 ${danger ? 'text-red' : 'text-ink2'}`} aria-hidden />
         <div className="flex flex-col">
-          <span className={`t-title ${danger ? 'text-[#ffb3ba]' : 'text-ink'}`}>{PATIENT_STATE_TEXT[ps]}</span>
+          <span className={`t-title ${danger ? 'text-redink' : 'text-ink'}`}>{PATIENT_STATE_TEXT[ps]}</span>
           <span className="t-label text-ink2">
             {fall?.stale ? 'Fall detector has no recent reading' : STATE_TEXT[fall?.state_name ?? 'UNKNOWN']}
           </span>
@@ -60,7 +60,7 @@ export default function FallDetectorPanel({ fall, scene, history }: {
           <span className="text-ink2">In the chair</span>
           <span className="tnum">{scene?.has_patient ? pct(frac) : '--'}</span>
         </div>
-        <div className="h-1.5 rounded-full bg-raised overflow-hidden">
+        <div className="h-1.5 rounded-full bg-surface2 overflow-hidden">
           <div className="h-full bg-ink2 rounded-full" style={{ width: `${Math.round(frac * 100)}%` }} />
         </div>
       </div>

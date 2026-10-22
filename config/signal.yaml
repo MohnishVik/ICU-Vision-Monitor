@@ -118,3 +118,31 @@ fall:
   yolo_iou:  0.45
   yolo_img_size: 640
   device: "auto"
+# ─────────────────────── Pain (EXPERIMENTAL) ───────────────────────
+# MobileNetV3-Small trained in SynPain.ipynb. Shown as a probability; never scored or alarmed on.
+pain:
+  weights: "models/public/pain_mobilenetv3_synpain.pth"
+  threshold: 0.2962          # F1-optimal on SynPAIN validation (training metadata)
+  update_every_s: 1.0
+  window: 5                  # scores averaged into the displayed probability
+  min_face_px: 40
+  device: "auto"
+
+# ─────────────────────── Learned RR / HR (EXPERIMENTAL) ───────────────────────
+# Each network gets exactly the input it was trained on (see src/modules/learned.py).
+# fuse: false -> shown next to the signal-processing value and logged for comparison,
+#                but kept out of the fused RR/HR, the early-warning score and alarms.
+# Set fuse: true only after scripts/compare_sessions.py shows they beat the DSP paths.
+learned:
+  fuse: false
+  device: "auto"
+  rr_lbrd:
+    weights: "models/public/rr_cnn1d_lbrdic.pth"           # 250 samples = 10 s @ 25 Hz, whole-frame green
+    window_s: 10
+  rr_d435:
+    weights: "models/finetuned/rr_cnn1d_d435_finetuned.pth"  # 300 samples = 10 s @ 30 Hz, chest depth
+    window_s: 10
+  hr_efficientphys:
+    weights: "models/public/hr_efficientphys_ubfc.pth"
+    window_s: 20
+    min_fill_s: 10

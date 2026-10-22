@@ -1,8 +1,8 @@
 """
 rr.py — Respiratory Rate module
 
-Two signal-processing paths run in parallel; the learned CNN is disabled by default
-(see models.yaml -> learned_paths). Outputs are fused by inverse-variance weighting
+Two signal-processing paths run in parallel. The learned CNNs live in src/modules/learned.py
+and are shown alongside (fused only when signal.yaml learned.fuse is true). Outputs are fused by inverse-variance weighting
 in src/fusion/inv_variance.py.
 
 Paths implemented here

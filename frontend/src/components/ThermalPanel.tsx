@@ -25,7 +25,7 @@ export default function ThermalPanel({ snap }: { snap: PatientSnapshot }) {
   const alignHref = `/patients/${encodeURIComponent(snap.patient_id)}/thermal`;
 
   return (
-    <section className="panel p-5 flex flex-col gap-4" aria-labelledby="thermal-h">
+    <section className="card card-pad flex flex-col gap-4" aria-labelledby="thermal-h">
       <div className="flex flex-wrap items-center gap-3">
         <h2 id="thermal-h" className="t-head">Thermal camera</h2>
         <span className="t-micro text-mute">ESP32, 80 × 62 sensor</span>
@@ -35,7 +35,7 @@ export default function ThermalPanel({ snap }: { snap: PatientSnapshot }) {
       </div>
 
       {!grid ? (
-        <div className="flex gap-3 items-start rounded-lg stale-hatch p-4">
+        <div className="flex gap-3 items-start rounded-lg hatch p-4">
           <ThermometerSnowflake className="h-5 w-5 text-mute shrink-0 mt-0.5" aria-hidden />
           <div className="flex flex-col gap-1">
             <p className="t-body text-ink">{th ? 'Thermal camera offline.' : 'Connecting to the thermal camera.'}</p>
@@ -60,7 +60,7 @@ export default function ThermalPanel({ snap }: { snap: PatientSnapshot }) {
               </span>
               <span className="t-micro text-mute">last 30 s; warms on each exhale, cools on each inhale</span>
             </div>
-            <div className="h-[96px] rounded-lg border border-hairline" role="img"
+            <div className="h-[96px] rounded-lg border border-line" role="img"
                  aria-label="Breath temperature over the last 30 seconds">
               {trace.length > 4 ? (
                 <ResponsiveContainer width="100%" height="100%">
@@ -68,7 +68,7 @@ export default function ThermalPanel({ snap }: { snap: PatientSnapshot }) {
                     <YAxis hide domain={['dataMin - 0.15', 'dataMax + 0.15']} />
                     <Tooltip isAnimationActive={false} cursor={{ stroke: 'var(--ink-2)', strokeWidth: 1 }}
                              content={({ active, payload }) => active && payload?.length ? (
-                               <div className="rounded-md border border-hairline bg-raised px-2 py-1 t-micro tnum">
+                               <div className="rounded-md border border-line bg-surface2 px-2 py-1 t-micro tnum">
                                  {(payload[0].value as number).toFixed(2)} °C
                                </div>) : null} />
                     <Line type="monotone" dataKey="c" stroke="var(--rr-line)" strokeWidth={2} dot={false}
@@ -92,7 +92,7 @@ export default function ThermalPanel({ snap }: { snap: PatientSnapshot }) {
                 </span>
               </p>
             ) : (
-              <p className="t-label text-[#ffc488] flex gap-2 items-start">
+              <p className="t-label text-amberink flex gap-2 items-start">
                 <TriangleAlert className="h-4 w-4 shrink-0 mt-0.5" aria-hidden />
                 Not aligned yet: breathing is read from the warmest spot, which may be the forehead
                 rather than the nose. Align once to read the nostrils.

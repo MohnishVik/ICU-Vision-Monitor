@@ -132,6 +132,35 @@ class PatientSource:
         self._breath: deque = deque(maxlen=600)
         self._snapshots: "OrderedDict[str, dict]" = OrderedDict()
 
+    # recording sessions (numbers only; see src/serving/session_log.py)
+    def session_status(self) -> dict:
+        rec = self.pipeline.recorder
+        return rec.status() if rec is not None else {"active": False}
+
+    def start_session(self, label: str, condition: str = "", reference: Optional[dict] = None,
+                      notes: str = "") -> dict:
+        from src.serving.session_log import SessionRecorder, sessions_root
+        if self.pipeline.recorder is not None:
+            raise RuntimeError("A session is already being recorded on this bed - stop it first.")
+        rec = SessionRecorder(sessions_root(), patient_id=self.patient_id, label=label,
+                              condition=condition, sources=self.pipeline.ALL_SOURCES,
+                              reference=reference, notes=notes, simulated=self.pipeline.simulated,
+                              fuse_learned=self.pipeline.learned_fused, mode=self.mode)
+        self.pipeline.recorder = rec
+        return rec.status()
+
+    def add_session_reference(self, rr: Optional[float], hr: Optional[float], note: str = "") -> dict:
+        rec = self.pipeline.recorder
+        if rec is None:
+            raise RuntimeError("No session is being recorded on this bed.")
+        return rec.add_reference(rr=rr, hr=hr, note=note)
+
+    def stop_session(self) -> dict:
+        rec, self.pipeline.recorder = self.pipeline.recorder, None
+        if rec is None:
+            raise RuntimeError("No session is being recorded on this bed.")
+        return rec.stop()
+
     # lifecycle
     def start(self) -> None:
         self._thread = threading.Thread(target=self._run_safe, name=f"engine-{self.patient_id}",
@@ -139,6 +168,11 @@ class PatientSource:
         self._thread.start()
 
     def stop(self) -> None:
+        if self.pipeline.recorder is not None:
+            try:
+                self.stop_session()
+            except Exception:  # noqa: BLE001
+                pass
         self._stop.set()
 
     def _run_safe(self) -> None:
@@ -410,10 +444,11 @@ class CameraEngine(PatientSource):
             "taa": lambda: mod("src.modules.taa").load_taa_module(signal_yaml, fs=self.fps),
             "fall": lambda: mod("src.modules.fall").load_fall_module(signal_yaml, local_pose=False),
         }
+        loaders["pain"] = lambda: mod("src.modules.pain").load_pain_module(signal_yaml)
         for name, fn in loaders.items():
             try:
                 self._mods[name] = fn()
-                self._set_mod(name, "ok", "")
+                self._set_mod(name, "ok", "experimental - never alarms" if name == "pain" else "")
             except FileNotFoundError as exc:
                 self._set_mod(name, "unavailable", f"Weights missing - {exc}")
             except Exception as exc:  # noqa: BLE001
@@ -421,10 +456,39 @@ class CameraEngine(PatientSource):
         if "fall" in self._mods and self._pose is None:
             self._set_mod("fall", "degraded", "Running without pose: needs yolov8n-pose.pt for "
                                               "keypoints.")
-        self._set_mod("pain", "pending", "src/modules/pain.py is a scaffold - no weights yet.")
+        if "pain" in self._mods and self._pose is None:
+            self._set_mod("pain", "degraded", "Needs pose tracking to find the face - see Pose tracking.")
+        self._load_learned(signal_yaml)
         # report the true redaction state from the start, not the optimistic default
         self.pipeline.scene.redaction = ("disabled" if not self.stream_video
                                          else ("faces" if self._pose is not None else "unavailable"))
+
+    def _load_learned(self, signal_yaml: str) -> None:
+        """The learned RR/HR networks load one by one; a missing file disables only its path."""
+        fused = "joins the fused value" if self.pipeline.learned_fused else "shown + logged, not fused"
+        try:
+            mods, errors = importlib.import_module("src.modules.learned").load_learned_modules(signal_yaml)
+        except Exception as exc:  # noqa: BLE001 - torch missing etc.
+            for name in ("rr_learned", "hr_learned"):
+                self._set_mod(name, "unavailable", f"{type(exc).__name__}: {exc}")
+            return
+        self._mods.update(mods)
+        if "rr_learned" in mods:
+            srcs = ", ".join(mods["rr_learned"].sources)
+            missing = "; ".join(v for k, v in errors.items() if k.startswith("rr_"))
+            self._set_mod("rr_learned", "degraded" if missing else "ok",
+                          f"{srcs} ({fused})" + (f". {missing}" if missing else ""))
+        else:
+            self._set_mod("rr_learned", "unavailable",
+                          "; ".join(v for k, v in errors.items() if k.startswith("rr_")))
+        if "hr_learned" in mods:
+            note = f"hr.efficientphys ({fused})"
+            if self._pose is None:
+                self._set_mod("hr_learned", "degraded", note + ". Needs pose tracking to find the face.")
+            else:
+                self._set_mod("hr_learned", "ok", note)
+        else:
+            self._set_mod("hr_learned", "unavailable", errors.get("hr_efficientphys", ""))
 
     # ---------------------------------------------------------- calibration --
     def _install_chair(self, chair: ChairCalibration) -> None:
@@ -726,12 +790,10 @@ class DemoEngine(PatientSource):
                                        for r, t in zip(rgb_pts, th_pts)])
         reg.source = "demo"
         self.thermal_reg = reg
-        for name in ("pose", "rr", "hr", "fall", "taa"):
+        for name in ("pose", "rr", "hr", "fall", "taa", "pain", "rr_learned", "hr_learned"):
             self.pipeline.modules[name] = {"ok": True, "state": "ok", "detail": "simulated",
                                            "errors": 0}
-        self.pipeline.modules["pain"] = {"ok": False, "state": "pending",
-                                         "detail": "src/modules/pain.py is a scaffold - no weights yet.",
-                                         "errors": 0}
+        self._pain = 0.12
 
     # calibration endpoints work, but only move the drawn polygon
     def set_calibration(self, corners: Any, label: str = "chair") -> dict:
@@ -870,6 +932,7 @@ class DemoEngine(PatientSource):
                                  if s["hr_ok"] else
                                  Measurement(None, 0.12, now, "hr.pos", 4.6,
                                              {"reason": "low_peak_power"}))
+                self._simulate_learned(raw, s, now)
                 self._sustain = self._sustain + 1.0 if s["taa"] else 0.0
                 raw["taa.depth"] = Measurement(s["taa_phase"], 0.7, now, "taa.depth", 2.0,
                                                {"taa_flag": bool(s["taa"] and self._sustain >= 10),
@@ -930,6 +993,34 @@ class DemoEngine(PatientSource):
                     self._last_rgb = img
                     self._publish_jpeg(_encode_jpeg(img, 70))
             self._stop.wait(0.1)
+
+    def _simulate_learned(self, raw: Dict[str, Measurement], s: dict, now: float) -> None:
+        """Simulated learned paths behave the way the real networks did on probe signals:
+        the LBRD CNN pulls toward ~15 BrPM, the D435 fine-tune sits near 6-7 BrPM, and
+        EfficientPhys reports ~100 BPM regardless of the true rate. Pain idles low and
+        rises while the patient is on the floor. The comparison view should show this."""
+        g = self.rng.gauss
+        exp = {"experimental": True, "simulated": True}
+        if not s["apnea"]:
+            lb = 15.0 + 0.3 * (s["rr"] - 15.0) + g(0, 0.8)
+            raw["rr.cnn_lbrd"] = Measurement(lb, 0.6, now, "rr.cnn_lbrd", 1.2,
+                                             {**exp, "raw_output": lb, "reason": None})
+            d4 = 6.4 + g(0, 0.3)
+            raw["rr.cnn_d435"] = Measurement(d4, 0.6, now, "rr.cnn_d435", 1.1,
+                                             {**exp, "raw_output": d4, "reason": None})
+        ep = 99.8 + g(0, 0.5)
+        raw["hr.efficientphys"] = Measurement(ep if s["hr_ok"] else None, 0.5 if s["hr_ok"] else 0.1, now,
+                                              "hr.efficientphys", 40.0,
+                                              {**exp, "rate_unfiltered": ep,
+                                               "reason": None if s["hr_ok"] else "low_quality"})
+        target = 0.68 if s["fall"] == 2 else (0.42 if self.scenario == "deteriorating" else 0.14)
+        self._pain += 0.15 * (target - self._pain) + g(0, 0.015)
+        p = float(min(1.0, max(0.0, self._pain)))
+        raw["pain.mobilenetv3"] = Measurement(p, 0.8, now, "pain.mobilenetv3", 18.0,
+                                              {**exp, "probability_raw": p, "threshold": 0.2962,
+                                               "pain_detected": p >= 0.2962, "face_px": 88,
+                                               "model": "mobilenet_v3_small", "trained_on": "SynPAIN",
+                                               "reason": None})
 
     def _render(self, pose: np.ndarray, staff: float, t: float) -> Optional[bytes]:
         img = self._render_array(pose, staff)
