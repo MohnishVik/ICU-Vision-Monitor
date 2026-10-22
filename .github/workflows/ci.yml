@@ -16,11 +16,11 @@ jobs:
           python-version: "3.10"
       - run: pip install pytest numpy
       - name: Subject leakage test (blocks merge on failure)
+        env:
+          PYTHONPATH: .
         run: pytest tests/test_leakage.py tests/test_types.py -v
 
   fusion-and-web:
-    # EWS scoring, fusion, alarm FSM and the web API (demo mode + camera mode with
-    # no hardware). No torch / pyrealsense2 needed: those modules report "unavailable".
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -28,7 +28,10 @@ jobs:
         with:
           python-version: "3.10"
       - run: pip install pytest httpx numpy scipy pyyaml "fastapi>=0.109" "uvicorn[standard]>=0.27" opencv-python-headless
-      - run: pytest tests/test_ews_scoring.py tests/test_fusion.py tests/test_serving.py -v
+      - name: Run Python tests
+        env:
+          PYTHONPATH: .
+        run: pytest tests/test_ews_scoring.py tests/test_fusion.py tests/test_serving.py tests/test_wiring.py tests/test_sessions.py -v
 
   frontend-build:
     runs-on: ubuntu-latest
@@ -43,4 +46,4 @@ jobs:
           cache: npm
           cache-dependency-path: frontend/package-lock.json
       - run: npm ci
-      - run: npm run build          # strict TypeScript check + production bundle
+      - run: npm run build
