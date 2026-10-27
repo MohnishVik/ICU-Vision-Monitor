@@ -70,11 +70,15 @@ export const api = {
   models: () => request<ModelsReport>('/api/models'),
   session: (id: string) => request<SessionStatus>(`/api/patients/${enc(id)}/session`),
   startSession: (id: string, body: { label: string; condition: string; notes: string;
-                                     reference: { rr: number | null; hr: number | null } }) =>
+                                     reference: { rr: number | null; hr: number | null }; capture: boolean }) =>
     request<SessionStatus>(`/api/patients/${enc(id)}/session`, { method: 'POST', body: JSON.stringify(body) }),
   addReference: (id: string, body: { rr: number | null; hr: number | null; note: string }) =>
     request<SessionStatus>(`/api/patients/${enc(id)}/session/reference`,
                            { method: 'POST', body: JSON.stringify(body) }),
+  sessionEvent: (id: string, kind: string, value: number | null = null, note = '') =>
+    request<SessionStatus>(`/api/patients/${enc(id)}/session/event`,
+                           { method: 'POST', body: JSON.stringify({ kind, value, note }) }),
+  sessionEventKinds: () => request<{ kinds: string[] }>('/api/session-event-kinds'),
   stopSession: (id: string) => request<SessionStatus>(`/api/patients/${enc(id)}/session`, { method: 'DELETE' }),
   sessions: () => request<SessionMeta[]>('/api/sessions'),
   report: (sid: string, warmup: number, settle: number) =>

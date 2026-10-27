@@ -3,14 +3,15 @@ test_leakage.py — CI blocks build if any subject_id appears in both train and 
 Run on every push via .github/workflows/ci.yml
 A subject appearing in both splits inflates accuracy by 10-20 points.
 """
-import pytest, json, os
+import glob, json, os
 
-SPLIT_FILES = [
+# training/finetune.py writes data/splits/<module>_splits.json (rr_d435, rr_lbrd, fall, ...)
+SPLIT_FILES = sorted(set(glob.glob("data/splits/*_splits.json") + [
     "data/splits/rr_splits.json",
     "data/splits/hr_splits.json",
     "data/splits/fall_splits.json",
     "data/splits/pain_splits.json",
-]
+]))
 
 def test_no_subject_leakage():
     for split_file in SPLIT_FILES:

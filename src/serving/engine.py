@@ -45,6 +45,7 @@ from src.scene.thermal_registration import (
     THERMAL_SHAPE, RoiStabilizer, ThermalRegistration, load_thermal_registration, mean_in_roi,
     nostril_box_rgb, registration_path, thermal_roi_from_rgb_box, warmest_patch_c,
 )
+from src.serving.capture import add_pose, capture_row
 from src.serving.state import SceneInfo, VitalsPipeline, to_jsonable
 from src.types import FrameBundle, Measurement
 
@@ -139,7 +140,7 @@ class PatientSource:
         return rec.status() if rec is not None else {"active": False}
 
     def start_session(self, label: str, condition: str = "", reference: Optional[dict] = None,
-                      notes: str = "") -> dict:
+                      notes: str = "", capture: bool = False) -> dict:
         from src.serving.session_log import SessionRecorder, sessions_root
         with self._session_lock:
             if self.pipeline.recorder is not None:
@@ -147,7 +148,8 @@ class PatientSource:
             rec = SessionRecorder(sessions_root(), patient_id=self.patient_id, label=label,
                                   condition=condition, sources=self.pipeline.ALL_SOURCES,
                                   reference=reference, notes=notes, simulated=self.pipeline.simulated,
-                                  fuse_learned=self.pipeline.learned_fused, mode=self.mode)
+                                  fuse_learned=self.pipeline.learned_fused, mode=self.mode,
+                                  capture=capture)
             self.pipeline.recorder = rec
         return rec.status()
 
@@ -156,6 +158,22 @@ class PatientSource:
         if rec is None:
             raise RuntimeError("No session is being recorded on this bed.")
         return rec.add_reference(rr=rr, hr=hr, note=note)
+
+    def add_session_event(self, kind: str, value: Optional[float] = None, note: str = "") -> dict:
+        rec = self.pipeline.recorder
+        if rec is None:
+            raise RuntimeError("No session is being recorded on this bed.")
+        return rec.add_event(kind, value=value, note=note)
+
+    def _capture(self, frame: dict) -> None:
+        """Hand one frame's model inputs to a capturing session; never breaks the frame loop."""
+        rec = self.pipeline.recorder
+        if rec is None or not rec.capture:
+            return
+        try:
+            rec.capture_frame(frame)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("Training capture frame dropped: %s", exc)
 
     def stop_session(self) -> dict:
         with self._session_lock:
@@ -668,6 +686,9 @@ class CameraEngine(PatientSource):
 
         track = tracker.update(people, ts=b.ts_mono, image_size=(h, w))
         roi = roi_builder.build(b, track)
+        rec = self.pipeline.recorder
+        if rec is not None and rec.capture:
+            self._capture(capture_row(b, roi, track.person, now))
         raw: Dict[str, Measurement] = {}
         for name, mod in self._mods.items():
             try:
@@ -990,6 +1011,18 @@ class DemoEngine(PatientSource):
                 thermal_registered=reg is not None, thermal_quality=reg.quality if reg else None)
             self.pipeline.metrics = {"fps": round(29.6 + self.rng.gauss(0, 0.3), 1),
                                      "latency_ms": round(38 + self.rng.gauss(0, 3), 1)}
+            rec = self.pipeline.recorder
+            if rec is not None and rec.capture:
+                # simulated training row: chest/abdomen move with the simulated breath (in mm),
+                # the abdomen out of phase while paradoxical breathing is simulated
+                abd_phase = self._phase + (math.pi if s["taa"] else 0.0)
+                row = {"t": now, "t_mono": time.monotonic(), "img_h": 480, "img_w": 640,
+                       "chest_depth": 1600.0 + 4.0 * math.sin(self._phase) + self.rng.gauss(0, 0.3),
+                       "chest_depth_body": 1600.0 + 4.0 * math.sin(self._phase) + self.rng.gauss(0, 0.2),
+                       "abdomen_depth": 1650.0 + 3.0 * math.sin(abd_phase) + self.rng.gauss(0, 0.3),
+                       "green": 92.0 + self.rng.gauss(0, 0.4), "has_person": True}
+                add_pose(row, pose, np.full(17, 0.9), (x1, y1, x2, y2))
+                self._capture(row)
             self.pipeline.step(now, raw, scene)
             if self._want_frame(now):
                 img = self._render_array(pose, s["staff"])

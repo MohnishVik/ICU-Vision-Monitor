@@ -3,13 +3,15 @@
 // While a session runs, every RR/HR estimator's value is logged once a second next to the
 // reference you trust (metronome rate, counted breaths, pulse oximeter). Nothing visual is
 // stored. Score sessions on the Compare page or with scripts/compare_sessions.py.
+// Optional training capture adds one numbers-only row per camera frame, and events marked during
+// the session (a fall, talking, a CPOT score) give the learned models their labels.
 import { Circle, Plus, Square } from 'lucide-react';
 import { cloneElement, useCallback, useEffect, useId, useState, type FormEvent, type ReactElement } from 'react';
 import { api } from '../lib/api';
-import { duration } from '../lib/format';
+import { clockSec, duration } from '../lib/format';
 import type { GlossKey } from '../lib/glossary';
 import type { SessionStatus } from '../types';
-import { Tip } from './Tooltip';
+import { InfoTip, Tip } from './Tooltip';
 
 /** A labelled field whose label explains itself on hover; the control carries the same text
  *  as its description, so keyboard and screen-reader users get it on focus. */
@@ -46,6 +48,116 @@ export function useSession(patientId: string | undefined, everyMs = 2000) {
   return { status, setStatus, refresh };
 }
 
+/** Event buttons, in the order a nurse is likely to reach for them. Kinds match
+ *  session_log.EVENT_KINDS; pain_score has its own control below. */
+const EVENTS: { kind: string; label: string }[] = [
+  { kind: 'fall', label: 'Fall' },
+  { kind: 'chair_exit', label: 'Chair exit' },
+  { kind: 'sit_to_stand', label: 'Sit-to-stand' },
+  { kind: 'lying_down', label: 'Lying down' },
+  { kind: 'talking', label: 'Talking' },
+  { kind: 'movement', label: 'Movement' },
+  { kind: 'breath_hold_start', label: 'Breath-hold start' },
+  { kind: 'breath_hold_end', label: 'Breath-hold end' },
+  { kind: 'paradoxical_start', label: 'Paradoxical breathing start' },
+  { kind: 'paradoxical_end', label: 'Paradoxical breathing end' },
+  { kind: 'procedure_start', label: 'Procedure start' },
+  { kind: 'procedure_end', label: 'Procedure end' },
+  { kind: 'other', label: 'Other' },
+];
+
+const PAIN_SCALES = { CPOT: { min: 0, max: 8 }, BPS: { min: 3, max: 12 } } as const;
+type PainScale = keyof typeof PAIN_SCALES;
+
+/** "Mark an event": each press posts at once and says so inline. Neutral buttons on purpose:
+ *  these are annotations in the record, never alarms, so they stay out of the red/orange family. */
+function EventMarker({ patientId, onStatus }: { patientId: string; onStatus: (s: SessionStatus) => void }) {
+  const [kinds, setKinds] = useState<string[] | null>(null);
+  const [note, setNote] = useState('');
+  const [scale, setScale] = useState<PainScale>('CPOT');
+  const [score, setScore] = useState('');
+  const [pending, setPending] = useState(false);
+  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
+
+  // hide any button the server does not know (older backend); show all until the list arrives
+  useEffect(() => {
+    api.sessionEventKinds().then((r) => setKinds(r.kinds)).catch(() => undefined);
+  }, []);
+  const known = (k: string) => kinds === null || kinds.includes(k);
+
+  const mark = async (kind: string, label: string, value: number | null = null, prefix = '') => {
+    setPending(true);
+    try {
+      const n = note.trim();
+      const s = await api.sessionEvent(patientId, kind, value, [prefix, n].filter(Boolean).join('; '));
+      onStatus(s);
+      setMsg({ ok: true, text: `${label} marked at ${clockSec(Date.now() / 1000)}` });
+      setNote('');
+      if (kind === 'pain_score') setScore('');
+    } catch (e) {
+      setMsg({ ok: false, text: (e as Error).message });
+    } finally {
+      setPending(false);
+    }
+  };
+
+  const markPain = (e: FormEvent) => {
+    e.preventDefault();
+    const { min, max } = PAIN_SCALES[scale];
+    const v = num(score);
+    if (v === null || !Number.isInteger(v) || v < min || v > max) {
+      setMsg({ ok: false, text: `Enter a whole-number ${scale} score from ${min} to ${max}.` });
+      return;
+    }
+    void mark('pain_score', `Pain score ${v} (${scale})`, v, scale);
+  };
+
+  const { min, max } = PAIN_SCALES[scale];
+  return (
+    <section className="rule-t pt-4 flex flex-col gap-3" aria-labelledby={`evt-h-${patientId}`}>
+      <div className="flex items-center gap-2">
+        <h3 id={`evt-h-${patientId}`} className="t-strong text-ink">Mark an event</h3>
+        <InfoTip term="sessionEvents" />
+      </div>
+      <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+        {EVENTS.filter((e) => known(e.kind)).map((e) => (
+          <button key={e.kind} type="button" className="btn whitespace-normal text-center leading-tight py-1"
+                  disabled={pending} onClick={() => void mark(e.kind, e.label)}>
+            {e.label}
+          </button>
+        ))}
+      </div>
+      {known('pain_score') && (
+        <form onSubmit={markPain} className="flex flex-wrap items-end gap-3" aria-label="Mark a pain score">
+          <Tip term="painScoreCPOT" asChild>
+            <div role="radiogroup" aria-label="Pain scale" className="seg self-end">
+              {(Object.keys(PAIN_SCALES) as PainScale[]).map((k) => (
+                <button key={k} type="button" role="radio" aria-checked={scale === k} onClick={() => setScale(k)}>{k}</button>
+              ))}
+            </div>
+          </Tip>
+          <div className="w-28">
+            <Field term="painScoreCPOT" label={`Score (${min}–${max})`}>
+              <input className="input tnum" inputMode="numeric" value={score} maxLength={2}
+                     onChange={(e) => setScore(e.target.value)} />
+            </Field>
+          </div>
+          <button type="submit" className="btn" disabled={pending}>Mark pain score</button>
+        </form>
+      )}
+      <Field term="sessionEvents" label="Note for the next event (optional)">
+        <input className="input" value={note} maxLength={180} onChange={(e) => setNote(e.target.value)}
+               placeholder="what happened… no names" />
+      </Field>
+      {/* one reserved line, so a confirmation or error never pushes the layout */}
+      <p className={`t-label min-h-[1.5em] tnum ${msg && !msg.ok ? 'text-red' : 'text-ink2'}`}
+         role={msg && !msg.ok ? 'alert' : 'status'} aria-live="polite">
+        {msg?.text ?? ''}
+      </p>
+    </section>
+  );
+}
+
 export default function SessionControl({ patientId, onStopped, compact = false }: {
   patientId: string; onStopped?: (id: string) => void; compact?: boolean;
 }) {
@@ -58,6 +170,7 @@ export default function SessionControl({ patientId, onStopped, compact = false }
   const [refRr, setRefRr] = useState('');
   const [refHr, setRefHr] = useState('');
   const [refNote, setRefNote] = useState('');
+  const [capture, setCapture] = useState(false);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
@@ -79,7 +192,7 @@ export default function SessionControl({ patientId, onStopped, compact = false }
   const start = (e: FormEvent) => {
     e.preventDefault();
     void run(() => api.startSession(patientId, {
-      label: label.trim() || condition, condition, notes, reference: { rr: num(rr), hr: num(hr) } }));
+      label: label.trim() || condition, condition, notes, reference: { rr: num(rr), hr: num(hr) }, capture }));
   };
   const addRef = (e: FormEvent) => {
     e.preventDefault();
@@ -100,6 +213,14 @@ export default function SessionControl({ patientId, onStopped, compact = false }
           <Tip title="Elapsed and logged" className="t-label text-mute tnum"
                content="Time since the recording started, and how many one-second rows have been written so far.">
             {duration(status.elapsed_s)} · {status.rows ?? 0} s logged
+          </Tip>
+          {status.capture && (
+            <Tip term="trainingCapture" className="t-label text-mute tnum">
+              Training capture on · {(status.frames ?? 0).toLocaleString()} frames
+            </Tip>
+          )}
+          <Tip term="sessionEvents" className="t-label text-mute tnum">
+            {status.events ?? 0} {status.events === 1 ? 'event' : 'events'}
           </Tip>
           <Tip title="Stop recording" content="Ends the session and saves it; it then appears on the Record & compare page for scoring." asChild>
             <button type="button" className="btn btn-sm ml-auto" disabled={busy} onClick={stop}>
@@ -128,6 +249,7 @@ export default function SessionControl({ patientId, onStopped, compact = false }
             <button type="submit" className="btn w-fit" disabled={busy}><Plus className="h-4 w-4" aria-hidden />Log reference</button>
           </Tip>
         </form>
+        <EventMarker patientId={patientId} onStatus={setStatus} />
         {status.error && <p className="t-label text-red" role="alert">Recording stopped: {status.error}</p>}
         {err && <p className="t-label text-red" role="alert">{err}</p>}
       </div>
@@ -154,13 +276,21 @@ export default function SessionControl({ patientId, onStopped, compact = false }
       {!compact && <Field term="sessNotes" label="Notes (optional)">
         <textarea className="input" value={notes} maxLength={500} onChange={(e) => setNotes(e.target.value)}
                   placeholder="lighting, distance, clothing… no names" /></Field>}
+      <Tip term="trainingCapture" asChild>
+        <label className="inline-flex items-center gap-2 t-label min-h-[40px] cursor-pointer w-fit">
+          <input type="checkbox" className="h-4 w-4 accent-current" checked={capture}
+                 onChange={(e) => setCapture(e.target.checked)} />
+          Capture training data
+        </label>
+      </Tip>
       <div className="flex flex-wrap items-center gap-3">
         <Tip term="recording" asChild>
           <button type="submit" className="btn btn-primary" disabled={busy}>
             <Circle className="h-4 w-4 fill-current text-red" aria-hidden />Start recording
           </button>
         </Tip>
-        <span className="t-micro text-mute">Numbers only: no video or images are saved.</span>
+        <span className="t-micro text-mute">Numbers only: no video or images are saved
+          {capture ? '; training capture adds about 30 rows a second.' : '.'}</span>
       </div>
       {err && <p className="t-label text-red" role="alert">{err}</p>}
     </form>

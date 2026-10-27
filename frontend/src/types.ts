@@ -65,6 +65,9 @@ export interface SessionStatus {
   elapsed_s?: number;
   reference?: { rr: number | null; hr: number | null };
   error?: string | null;
+  capture?: boolean;       // training capture on: frames.csv gets one numbers-only row per camera frame
+  frames?: number;         // rows captured so far
+  events?: number;         // events marked so far
 }
 
 export interface EWS {

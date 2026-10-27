@@ -390,6 +390,15 @@ Other `main.py` options: `--port` (default 8000), `--patient-id` (default `bed-1
 ## Recording and comparing estimators
 
 Use this to decide, with evidence, whether any learned model should join the fused value.
+For the full study workflow (approvals, equipment, camera and chair placement, subjects,
+per-block protocols, and the path to fine-tuned weights) see
+[docs/RECORDING_AND_FINETUNING.md](docs/RECORDING_AND_FINETUNING.md).
+
+Fine-tuning in short: tick **Capture training data** when starting a session (per-frame chest
+depth, mean green and pose keypoints, numbers only), press **Mark an event** as falls and other
+moments happen, optionally `python scripts/import_reference.py <session> <device.csv>`, then
+`python training/finetune.py --module rr_d435|rr_lbrd|fall` and
+`python training/eval.py --module … --weights models/finetuned/…`.
 
 1. Start the monitor (`python main.py`) and set up the chair as usual.
 2. Open **Record & compare** (or the bed page → *Record a comparison session*). Pick the

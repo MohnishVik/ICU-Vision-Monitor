@@ -541,6 +541,25 @@ export const GLOSSARY = g({
       + 'when it moves by more than 3 bpm.',
   },
   sessNotes: { title: 'Notes', body: 'Lighting, distance, clothing, anything unusual. No names or identifying details.' },
+  trainingCapture: {
+    title: 'Capture training data',
+    body: 'Also saves numbers worked out from every camera frame (chest and abdomen depth, overall skin '
+      + 'colour, body-point positions), about 30 rows a second, so the learned models can be fine-tuned '
+      + 'later. No images are saved. Files grow much larger than a normal session, so leave it off unless '
+      + 'the recording is meant for training.',
+  },
+  sessionEvents: {
+    title: 'Marking events',
+    body: 'Press a button the moment something happens: a fall, the patient leaving the chair, talking, '
+      + 'a breath-hold, a procedure. Each press is saved with the time, so the recording shows what the '
+      + 'camera should have seen and when. These are notes in the record, not alarms.',
+  },
+  painScoreCPOT: {
+    title: 'Pain score (CPOT or BPS)',
+    body: 'An observed pain score for patients who cannot self-report. CPOT, Critical-Care Pain Observation '
+      + 'Tool, runs 0–8; above 2 suggests pain. BPS, Behavioral Pain Scale, runs 3–12; above 5 suggests '
+      + 'pain. Enter only scores taken by a nurse trained in that tool; they are used to check the pain model.',
+  },
   logReference: {
     title: 'Log reference',
     body: 'Records a new reference value at this moment. Scoring uses the latest one before each second.',

@@ -225,6 +225,29 @@ def _meas(source: str, value: Optional[float], sqi: float, t0: float, meta: dict
                        meta={"experimental": True, **meta})
 
 
+def rr_net_input(x: np.ndarray, detrend: bool) -> Optional[np.ndarray]:
+    """
+    The exact Resp1DCNN input: optional linear detrend (D435 path), then z-score.
+    None when the window is flat relative to its size. training/dataset.py calls this too,
+    so fine-tuning windows are prepared identically to live ones.
+    """
+    x = np.asarray(x, dtype=np.float64)
+    scale = max(1.0, float(np.max(np.abs(x))))
+    if detrend:
+        x = scipy.signal.detrend(x, type="linear")
+    std = float(np.std(x))
+    if std < 1e-6 * scale:
+        return None
+    return (x - np.mean(x)) / std
+
+
+def resample_window(t: np.ndarray, v: np.ndarray, n: int, window_s: float) -> Tuple[np.ndarray, float]:
+    """Last window_s of (t, v) on n points ending at t[-1], as the live _Series does."""
+    fs = n / window_s
+    grid = t[-1] - (n - 1 - np.arange(n)) / fs
+    return np.interp(grid, t, v), fs
+
+
 class _Series:
     """Timestamped 1-D buffer resampled onto a fixed grid ending at the newest sample."""
 
@@ -246,9 +269,7 @@ class _Series:
     def window(self) -> Tuple[np.ndarray, float]:
         """Last window resampled to n_samples points spaced window_s / n_samples apart."""
         t, v = np.asarray(self.t), np.asarray(self.v, dtype=np.float64)
-        n, fs = self.net.n_samples, self.net.n_samples / self.net.window_s
-        grid = t[-1] - (n - 1 - np.arange(n)) / fs
-        return np.interp(grid, t, v), fs
+        return resample_window(t, v, self.net.n_samples, self.net.window_s)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -298,15 +319,11 @@ class LearnedRRModule:
     def _estimate(self, source: str, net: nn.Module, series: _Series, detrend: bool) -> Measurement:
         t0 = time.perf_counter()
         x, fs = series.window()                                   # float64
-        scale = max(1.0, float(np.max(np.abs(x))))
-        if detrend:
-            x = scipy.signal.detrend(x, type="linear")
         lo, good, hw = self.cfg.rr_quality
-        std = float(np.std(x))
-        if std < 1e-6 * scale:                                    # constant input (relative to its size)
+        z = rr_net_input(x, detrend)
+        if z is None:                                             # constant input (relative to its size)
             return _meas(source, None, 0.0, t0, {"raw_output": None, "reason": "flat_signal",
                                                  "input_peak_bpm": None, "fs_hz": fs})
-        z = (x - np.mean(x)) / std
         with torch.no_grad():
             raw = float(net(torch.from_numpy(z.astype(np.float32))[None, None].to(self.device)).item())
         peak_bpm, frac = _peak(z, fs, self.cfg.rr_band_hz, hw, nperseg=len(z), nfft=16384)

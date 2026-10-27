@@ -6,6 +6,8 @@ Endpoints (all under /api, matching frontend/vite.config.ts):
   GET    /health                          — module liveness + stale-value check
   GET    /patients/{id}/session          — recording status; POST starts ({label, condition, reference})
   POST   /patients/{id}/session/reference — add a reference reading ({rr?, hr?, note})
+  POST   /patients/{id}/session/event     — mark an event ({kind, value?, note}); kinds from
+                                             GET /session-event-kinds
   DELETE /patients/{id}/session          — stop recording
   GET    /sessions                        — recorded sessions (newest first)
   GET    /sessions/{sid}/report           — MAE + coverage per source (?warmup_s=&settle_s=)
@@ -75,9 +77,16 @@ class SessionBody(BaseModel):
     condition: str = Field("", max_length=80)
     notes: str = Field("", max_length=500)
     reference: Reference = Reference()
+    capture: bool = False          # also write frames.csv (training capture, numbers only)
 
 
 class ReferenceBody(Reference):
+    note: str = Field("", max_length=200)
+
+
+class EventBody(BaseModel):
+    kind: str = Field(..., min_length=1, max_length=40)
+    value: Optional[float] = None      # e.g. a CPOT (0-8) or BPS (3-12) score for pain_score
     note: str = Field("", max_length=200)
 
 
@@ -134,9 +143,25 @@ def build_api_router(manager: EngineManager) -> APIRouter:
     def start_session(patient_id: str, body: SessionBody) -> dict:
         src = _source(manager, patient_id)
         try:
-            return src.start_session(body.label, body.condition, body.reference.model_dump(), body.notes)
+            return src.start_session(body.label, body.condition, body.reference.model_dump(), body.notes,
+                                     capture=body.capture)
         except RuntimeError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from None
+
+    @r.get("/session-event-kinds")
+    def session_event_kinds() -> dict:
+        from src.serving.session_log import EVENT_KINDS
+        return {"kinds": list(EVENT_KINDS)}
+
+    @r.post("/patients/{patient_id}/session/event")
+    def add_event(patient_id: str, body: EventBody) -> dict:
+        src = _source(manager, patient_id)
+        try:
+            return src.add_session_event(body.kind, body.value, body.note)
+        except RuntimeError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from None
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from None
 
     @r.post("/patients/{patient_id}/session/reference")
     def add_reference(patient_id: str, body: ReferenceBody) -> dict:
