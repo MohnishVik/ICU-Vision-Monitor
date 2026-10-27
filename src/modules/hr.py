@@ -18,6 +18,14 @@ Quality
   so a quiet-skin or low-light tick returns "unavailable" instead of a confident
   wrong number.
 
+Motion and light
+  A head turn or a hand across the face shifts the skin brightness by several percent in a
+  fraction of a second, far more than a heartbeat (well under 1 %). When the half-second
+  mean skin brightness steps by more than motion_rel the window restarts and the module
+  reports value=None with meta["reason"] = "motion" while it refills. When a reading is
+  rejected and the face averages below low_light_luma (0-255), the reason is "low_light":
+  sensor noise is then larger than the pulse and more light on the face is the fix.
+
 Nothing in here reads cameras or writes files.
 """
 
@@ -32,6 +40,7 @@ import cv2
 import numpy as np
 import scipy.signal
 
+from src.modules.motion import MotionGate
 from src.types import FrameBundle, Measurement, ROIBundle
 
 
@@ -65,6 +74,8 @@ class HRConfig:
     reported_range_bpm: tuple[float, float]
     pos: _POSCfg
     quality: _QualityCfg
+    motion_rel: float = 0.05            # half-second skin-brightness step that counts as movement
+    low_light_luma: float = 60.0        # face darker than this -> "low_light" when rejected
 
     @classmethod
     def from_dict(cls, cfg: dict) -> "HRConfig":
@@ -87,6 +98,8 @@ class HRConfig:
             quality=_QualityCfg(**{k: hr["quality"][k] for k in
                                    ("peak_power_frac_min", "peak_power_frac_good",
                                     "peak_half_width_hz")}),
+            motion_rel=float(p.get("motion_rel", 0.05)),
+            low_light_luma=float(p.get("low_light_luma", 60.0)),
         )
 
 
@@ -124,6 +137,10 @@ def _mean_skin_rgb(face_bgr: np.ndarray) -> Optional[np.ndarray]:
 
     # BGR -> RGB
     return np.array([mean_bgr[2], mean_bgr[1], mean_bgr[0]], dtype=np.float32)
+
+
+def _luma(rgb_mean: np.ndarray) -> float:
+    return float(0.299 * rgb_mean[0] + 0.587 * rgb_mean[1] + 0.114 * rgb_mean[2])
 
 
 def _fallback_face_roi(rgb: np.ndarray, roi_frac: dict) -> np.ndarray:
@@ -250,9 +267,22 @@ class HRModule:
 
     def __init__(self, cfg: HRConfig, fs: float = 30.0):
         self.cfg = cfg
+        self._fs = fs
         self._buf = _POSBuffer(cfg=cfg.pos, fs_nominal=fs)
+        self._motion = MotionGate(fs, rel_thresh=cfg.motion_rel)
+        self._last_motion_report = 0.0
 
     def process(self, bundle: FrameBundle, roi: Optional[ROIBundle] = None) -> dict:
+        out = self._process(bundle, roi)
+        now = bundle.ts_mono
+        if "hr.pos" not in out and self._motion.recent(now, self.cfg.pos.min_fill_s) \
+                and not self._buf.ready(now) and now - self._last_motion_report >= self.cfg.pos.update_every_s:
+            # refilling after movement: say so instead of going quiet
+            self._last_motion_report = now
+            out["hr.pos"] = Measurement(None, 0.0, time.time(), "hr.pos", 0.0, {"reason": "motion"})
+        return out
+
+    def _process(self, bundle: FrameBundle, roi: Optional[ROIBundle] = None) -> dict:
         # 1. Pick the face crop
         if roi is not None and roi.face_roi is not None and roi.face_roi.size > 0:
             face = roi.face_roi
@@ -261,6 +291,9 @@ class HRModule:
 
         # 2. Mean skin RGB -> buffer
         rgb_mean = _mean_skin_rgb(face)
+        if rgb_mean is not None and self._motion.update(_luma(rgb_mean), bundle.ts_mono):
+            self._buf = _POSBuffer(cfg=self.cfg.pos, fs_nominal=self._fs)   # restart the window
+            return {}
         if rgb_mean is not None:
             self._buf.append(rgb_mean, bundle.ts_mono)
         elif self._buf.ts:
@@ -301,6 +334,9 @@ class HRModule:
         )
         sqi   = _sqi_from_frac(frac, self.cfg.quality)
         value = rate_bpm if (rate_bpm is not None and frac >= self.cfg.quality.peak_power_frac_min) else None
+        face_luma = float(np.mean(0.299 * rgb[0] + 0.587 * rgb[1] + 0.114 * rgb[2]))
+        if value is None:
+            dbg["reason"] = "low_light" if face_luma < self.cfg.low_light_luma else "no_valid_input"
 
         return Measurement(
             value=value,
@@ -312,6 +348,7 @@ class HRModule:
                 "fs_hz": round(fs, 3),
                 "peak_power_frac": round(frac, 3),
                 "window_s": round(ts[-1] - ts[0], 2),
+                "face_luma": round(face_luma, 1),
                 **dbg,
             },
         )

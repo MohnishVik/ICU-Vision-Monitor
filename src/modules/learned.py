@@ -157,7 +157,7 @@ class LearnedConfig:
         cfg = cfg or {}
         c = cls()
         ln = cfg.get("learned") or {}
-        c.fuse = bool(ln.get("fuse", c.fuse))
+        c.fuse = bool(ln.get("fuse", c.fuse))       # true, or a non-empty list of sources
         c.device = str(ln.get("device", c.device))
         for key, net in (("rr_lbrd", c.rr_lbrd), ("rr_d435", c.rr_d435), ("hr_efficientphys", c.hr)):
             for k, v in (ln.get(key) or {}).items():

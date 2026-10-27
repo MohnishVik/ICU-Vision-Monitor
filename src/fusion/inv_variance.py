@@ -14,6 +14,11 @@ Agreement gate: if two surviving paths disagree by more than
 `agreement_gate_bpm` (signal.yaml rr/hr.agreement_gate_bpm), we do not average
 them into a plausible-looking middle value — the fused output is None with
 meta.reason = "paths_disagree".
+
+Secondary paths (the learned networks, when fused) are advisory: when one is
+further than the gate from the signal-processing paths it is dropped for that
+update (meta.rejected = "disagrees_with_primary") instead of blanking the vital.
+With no primary path available, secondary paths fuse on their own.
 """
 from __future__ import annotations
 
@@ -31,6 +36,7 @@ class FusionConfig:
     sigma_min: float = 0.5             # bpm, for sqi = 1.0
     sigma_max: float = 6.0             # bpm, for sqi = sqi_min
     agreement_gate_bpm: Optional[float] = None
+    secondary: frozenset = frozenset()  # sources dropped first when paths disagree
 
 
 def _sigma(m: Measurement, cfg: FusionConfig) -> float:
@@ -63,8 +69,20 @@ def fuse(measurements: Iterable[Optional[Measurement]], source: str,
     base_meta = {"inputs": [m.source for m in used], "rejected": rejected}
 
     if not used:
+        # pass the most actionable cause through ("Patient moving" beats "Signal too weak")
+        causes = {m.meta.get("reason") for m in candidates if isinstance(m.meta, dict)}
+        reason = next((r for r in ("motion", "low_light") if r in causes), "no_valid_input")
         return Measurement(None, 0.0, ts, source, (time.perf_counter() - t0) * 1e3,
-                           {**base_meta, "reason": "no_valid_input"})
+                           {**base_meta, "reason": reason})
+
+    gate = cfg.agreement_gate_bpm
+    primary = sorted(float(m.value) for m in used if m.source not in cfg.secondary)
+    if gate is not None and primary and len(primary) < len(used):
+        ref = primary[len(primary) // 2]                   # median of the primary paths
+        for m in [m for m in used if m.source in cfg.secondary and abs(float(m.value) - ref) > gate]:
+            used.remove(m)
+            rejected[m.source] = "disagrees_with_primary"
+        base_meta["inputs"] = [m.source for m in used]
 
     vals = [float(m.value) for m in used]
     if cfg.agreement_gate_bpm is not None and len(vals) > 1 \

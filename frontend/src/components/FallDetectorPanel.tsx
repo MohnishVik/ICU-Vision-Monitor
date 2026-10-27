@@ -2,8 +2,10 @@
 // Posture over time is shown as a strip: normal is quiet, falling amber, lying red,
 // each also named in the legend so colour never works alone.
 import { Armchair, PersonStanding, ShieldAlert, Users } from 'lucide-react';
-import { ago, pct, PATIENT_STATE_TEXT } from '../lib/format';
+import { ago, clockSec, pct, PATIENT_STATE_TEXT } from '../lib/format';
+import { glossKey } from '../lib/glossary';
 import type { FallInfo, History, Scene } from '../types';
+import { InfoTip, Tip } from './Tooltip';
 
 const STATE_TEXT = { NORMAL: 'Upright or seated', FALLING: 'Falling motion', LYING_DOWN: 'Lying down',
                      UNKNOWN: 'No reading' } as const;
@@ -16,13 +18,15 @@ function PostureStrip({ history }: { history: History | null }) {
   const n = vals.length;
   return (
     <div className="flex flex-col gap-1.5">
-      <svg viewBox={`0 0 ${n} 10`} preserveAspectRatio="none" className="w-full h-3 rounded-sm overflow-hidden"
-           role="img" aria-label="Posture over the selected window">
-        <rect x={0} y={0} width={n} height={10} fill="var(--surface-2)" />
-        {vals.map((v, i) => (v === 1 || v === 2) && (
-          <rect key={i} x={i} y={0} width={1.02} height={10} fill={v === 2 ? 'var(--red)' : 'var(--amber)'} />
-        ))}
-      </svg>
+      <Tip term="postureStrip" className="block">
+        <svg viewBox={`0 0 ${n} 10`} preserveAspectRatio="none" className="block w-full h-3 rounded-sm overflow-hidden"
+             role="img" aria-label="Posture over the selected window">
+          <rect x={0} y={0} width={n} height={10} fill="var(--surface-2)" />
+          {vals.map((v, i) => (v === 1 || v === 2) && (
+            <rect key={i} x={i} y={0} width={1.02} height={10} fill={v === 2 ? 'var(--red)' : 'var(--amber)'} />
+          ))}
+        </svg>
+      </Tip>
       <div className="flex gap-4 t-micro text-mute">
         <span className="inline-flex items-center gap-1.5"><i className="h-2 w-3 rounded-sm bg-surface2" />Normal</span>
         <span className="inline-flex items-center gap-1.5"><i className="h-2 w-3 rounded-sm bg-amber" />Falling</span>
@@ -44,34 +48,43 @@ export default function FallDetectorPanel({ fall, scene, history }: {
 
   return (
     <section className="card card-pad flex flex-col gap-4" aria-labelledby="fall-h">
-      <h2 id="fall-h" className="t-head">Position and falls</h2>
+      <div className="flex items-center gap-2">
+        <h2 id="fall-h" className="t-head">Position and falls</h2>
+        <InfoTip term="falls" />
+      </div>
       <div className="flex items-center gap-3">
         <Icon className={`h-7 w-7 ${danger ? 'text-red' : 'text-ink2'}`} aria-hidden />
-        <div className="flex flex-col">
-          <span className={`t-title ${danger ? 'text-redink' : 'text-ink'}`}>{PATIENT_STATE_TEXT[ps]}</span>
-          <span className="t-label text-ink2">
+        <div className="flex flex-col items-start">
+          <Tip term={glossKey('state_', ps, 'state_UNKNOWN')} className={`t-title ${danger ? 'text-redink' : 'text-ink'}`}>
+            {PATIENT_STATE_TEXT[ps]}
+          </Tip>
+          <Tip term={fall?.stale ? 'stale' : 'fallFsm'} className="t-label text-ink2">
             {fall?.stale ? 'Fall detector has no recent reading' : STATE_TEXT[fall?.state_name ?? 'UNKNOWN']}
-          </span>
+          </Tip>
         </div>
       </div>
 
-      <div className="flex flex-col gap-1.5">
-        <div className="flex justify-between t-label">
+      <Tip term="inChairFrac" className="flex flex-col gap-1.5">
+        <span className="flex justify-between t-label">
           <span className="text-ink2">In the chair</span>
           <span className="tnum">{scene?.has_patient ? pct(frac) : '--'}</span>
-        </div>
-        <div className="h-1.5 rounded-full bg-surface2 overflow-hidden">
-          <div className="h-full bg-ink2 rounded-full" style={{ width: `${Math.round(frac * 100)}%` }} />
-        </div>
-      </div>
+        </span>
+        <span className="block h-1.5 rounded-full bg-surface2 overflow-hidden">
+          <span className="block h-full bg-ink2 rounded-full" style={{ width: `${Math.round(frac * 100)}%` }} />
+        </span>
+      </Tip>
 
       <dl className="grid grid-cols-2 gap-x-6 gap-y-2 t-label">
-        <dt className="text-ink2">Last confirmed fall</dt>
-        <dd className="text-right tnum">{fall?.last_confirmed ? ago(fall.last_confirmed) : 'none this session'}</dd>
-        <dt className="text-ink2">Model confidence</dt>
+        <dt className="text-ink2"><Tip term="confirmedFall" className="tip-term">Last confirmed fall</Tip></dt>
+        <dd className="text-right tnum">
+          {fall?.last_confirmed ? `${clockSec(fall.last_confirmed)} (${ago(fall.last_confirmed)})` : 'none this session'}
+        </dd>
+        <dt className="text-ink2"><Tip term="fallModel" className="tip-term">Model confidence</Tip></dt>
         <dd className="text-right tnum">{fall?.ml_probability === null || fall?.ml_probability === undefined
           ? '--' : pct(fall.ml_probability)}</dd>
-        <dt className="text-ink2 inline-flex items-center gap-1.5"><Users className="h-3.5 w-3.5" aria-hidden />Others in view</dt>
+        <dt className="text-ink2">
+          <Tip term="staff" className="tip-term inline-flex items-center gap-1.5"><Users className="h-3.5 w-3.5" aria-hidden />Others in view</Tip>
+        </dt>
         <dd className="text-right tnum">{scene?.staff_count ?? 0}</dd>
       </dl>
 

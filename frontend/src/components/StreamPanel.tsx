@@ -4,10 +4,21 @@
 // The overlay (chair polygon, patient skeleton, staff boxes) is drawn here in SVG
 // from the keypoints in the snapshot, so it stays crisp and can be toggled.
 import { CameraOff, Crosshair, EyeOff, Layers, ShieldCheck, ShieldAlert } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { urls } from '../lib/api';
+import type { GlossKey } from '../lib/glossary';
 import type { PatientSnapshot } from '../types';
+import { Tip } from './Tooltip';
+
+/** One overlay legend entry: the same mark as on the video, its name, and what it means. */
+function Key({ term, mark, children }: { term: GlossKey; mark: ReactNode; children: ReactNode }) {
+  return (
+    <Tip term={term} className="inline-flex items-center gap-1.5">
+      <svg width="16" height="12" aria-hidden>{mark}</svg>{children}
+    </Tip>
+  );
+}
 
 const BONES: [number, number][] = [
   [5, 7], [7, 9], [6, 8], [8, 10], [5, 6], [5, 11], [6, 12], [11, 12],
@@ -119,28 +130,54 @@ export default function StreamPanel({ snap }: { snap: PatientSnapshot }) {
       </div>
 
       <figcaption className="flex flex-wrap items-center gap-x-4 gap-y-2 px-4 py-2.5 rule-t">
-        <button type="button" className="btn btn-ghost h-8 px-2" onClick={() => setOverlay((o) => !o)}
-                aria-pressed={overlay}>
-          {overlay ? <Layers className="h-4 w-4" aria-hidden /> : <EyeOff className="h-4 w-4" aria-hidden />}
-          {overlay ? 'Hide overlay' : 'Show overlay'}
-        </button>
-        {!offline && <span className="t-micro text-ink2 inline-flex items-center gap-1.5">
-          {scene?.redaction === 'faces' ? (
-            <><ShieldCheck className="h-3.5 w-3.5 text-ink2" aria-hidden /> Faces blurred, nothing recorded</>
-          ) : scene?.redaction === 'disabled' ? (
-            <><EyeOff className="h-3.5 w-3.5" aria-hidden /> Video streaming turned off</>
-          ) : (
-            <span className="text-amber inline-flex items-center gap-1.5">
-              <ShieldAlert className="h-3.5 w-3.5" aria-hidden />
-              Face blur unavailable: pose model not loaded
-            </span>
-          )}
-        </span>}
-        {snap.simulated && <span className="t-micro text-ink2">Simulated feed, no camera</span>}
-        <span className="t-micro text-mute ml-auto tnum">
-          {snap.metrics?.fps ? `${snap.metrics.fps} fps` : ''}
-          {snap.metrics?.latency_ms ? `  ${Math.round(snap.metrics.latency_ms)} ms per frame` : ''}
-        </span>
+        <Tip term="overlayLegend" asChild>
+          <button type="button" className="btn btn-ghost h-8 px-2" onClick={() => setOverlay((o) => !o)}
+                  aria-pressed={overlay}>
+            {overlay ? <Layers className="h-4 w-4" aria-hidden /> : <EyeOff className="h-4 w-4" aria-hidden />}
+            {overlay ? 'Hide overlay' : 'Show overlay'}
+          </button>
+        </Tip>
+        {!offline && (scene?.redaction === 'faces' ? (
+          <Tip term="faceBlur" className="t-micro text-ink2 inline-flex items-center gap-1.5">
+            <ShieldCheck className="h-3.5 w-3.5 text-ink2" aria-hidden /> Faces blurred, nothing recorded
+          </Tip>
+        ) : scene?.redaction === 'disabled' ? (
+          <span className="t-micro text-ink2 inline-flex items-center gap-1.5">
+            <EyeOff className="h-3.5 w-3.5" aria-hidden /> Video streaming turned off
+          </span>
+        ) : (
+          <Tip term="faceBlurOff" className="t-micro text-amber inline-flex items-center gap-1.5">
+            <ShieldAlert className="h-3.5 w-3.5" aria-hidden />
+            Face blur unavailable: pose model not loaded
+          </Tip>
+        ))}
+        {snap.simulated && <Tip term="demo" className="t-micro text-ink2">Simulated feed, no camera</Tip>}
+        {(snap.metrics?.fps || snap.metrics?.latency_ms) ? (
+          <Tip term="fps" className="t-micro text-mute ml-auto tnum">
+            {snap.metrics?.fps ? `${snap.metrics.fps} fps` : ''}
+            {snap.metrics?.latency_ms ? `  ${Math.round(snap.metrics.latency_ms)} ms per frame` : ''}
+          </Tip>
+        ) : null}
+        {overlay && !offline && (
+          <div className="w-full flex flex-wrap items-center gap-x-4 gap-y-1 t-micro text-mute" role="group" aria-label="Overlay key">
+            {scene?.chair && (
+              <Key term="seatOutline" mark={<rect x="1.5" y="1.5" width="13" height="9" rx="1.5" fill="none" stroke="var(--ink)" strokeWidth="1.5" />}>
+                Seat outline
+              </Key>
+            )}
+            <Key term="poseSkeleton" mark={<g stroke="var(--ink)" strokeWidth="1.75" strokeLinecap="round"><line x1="3" y1="10" x2="8" y2="3" /><line x1="8" y1="3" x2="13" y2="10" /><circle cx="8" cy="3" r="1.75" fill="var(--ink)" stroke="none" /></g>}>
+              Patient pose
+            </Key>
+            <Key term="staffBox" mark={<rect x="1.5" y="1.5" width="13" height="9" rx="2" fill="none" stroke="var(--mute)" strokeWidth="1.5" />}>
+              Staff
+            </Key>
+            {scene?.thermal_registered && scene?.nostril_box && (
+              <Key term="nostrilRegion" mark={<rect x="1.5" y="1.5" width="13" height="9" rx="1.5" fill="color-mix(in srgb, var(--rr) 14%, transparent)" stroke="var(--rr)" strokeWidth="1.5" />}>
+                Breathing region
+              </Key>
+            )}
+          </div>
+        )}
       </figcaption>
     </figure>
   );

@@ -5,6 +5,7 @@ import { ArrowRight, ArrowUpRight, Camera, Crosshair, Thermometer } from 'lucide
 import type { ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import Logo from '../components/Logo';
+import { InfoTip, Tip } from '../components/Tooltip';
 import { Experimental, Quality } from '../components/ui';
 import { useWard } from '../context/WardContext';
 import type { PatientSummary } from '../types';
@@ -52,31 +53,34 @@ function LiveWard() {
   return (
     <section aria-labelledby="live-h" className="card overflow-hidden">
       <div className="flex items-center gap-3 px-5 pt-4 pb-3 rule-b">
-        <h2 id="live-h" className="t-head">On the ward now</h2>
-        <span className="ml-auto inline-flex items-center gap-2 t-micro text-mute">
+        <div className="flex items-center gap-2">
+          <h2 id="live-h" className="t-head">On the ward now</h2>
+          <InfoTip term="wardPreview" />
+        </div>
+        <Tip term="live" className="ml-auto inline-flex items-center gap-2 t-micro text-mute">
           <span className={`h-2 w-2 rounded-full ${link === 'live' ? 'bg-hr' : 'bg-amber'}`} aria-hidden />
           {link === 'live' ? 'Live, updates every second' : 'Reconnecting'}
-        </span>
+        </Tip>
       </div>
       <ul>
         {ward.map((p) => {
           const w = bedWord(p);
           return (
-            <li key={p.patient_id} className="rule-b last:border-b-0">
-              <Link to={`/patients/${p.patient_id}`}
-                    className="grid grid-cols-[1fr_auto_auto_20px] items-center gap-x-5 px-5 py-3.5 hover:bg-surface2 transition-colors">
-                <span className="min-w-0">
-                  <span className="block font-cond font-semibold text-[17px]">{p.label}</span>
-                  <span className={`block t-micro truncate ${w.tone}`}>{w.text}</span>
-                </span>
-                <span className="flex items-baseline gap-1.5" aria-label="Heart rate">
-                  <Num v={p.hr} tone="text-hr" /><span className="t-micro text-mute">bpm</span>
-                </span>
-                <span className="flex items-baseline gap-1.5" aria-label="Breathing rate">
-                  <Num v={p.rr} tone="text-rr" /><span className="t-micro text-mute">br/min</span>
-                </span>
-                <ArrowRight className="h-4 w-4 text-mute" aria-hidden />
-              </Link>
+            <li key={p.patient_id}
+                className="stretch-card relative grid grid-cols-[1fr_auto_auto_20px] items-center gap-x-5 px-5 py-3.5 rule-b last:border-b-0 hover:bg-surface2 transition-colors">
+              <span className="min-w-0">
+                <Link to={`/patients/${p.patient_id}`} className="stretch-link block w-fit font-cond font-semibold text-[17px] rounded">
+                  {p.label}
+                </Link>
+                <span className={`block t-micro truncate ${w.tone}`}>{w.text}</span>
+              </span>
+              <Tip term="hr" className="flex items-baseline gap-1.5">
+                <Num v={p.hr} tone="text-hr" /><span className="t-micro text-mute">bpm</span>
+              </Tip>
+              <Tip term="rr" className="flex items-baseline gap-1.5">
+                <Num v={p.rr} tone="text-rr" /><span className="t-micro text-mute">br/min</span>
+              </Tip>
+              <ArrowRight className="h-4 w-4 text-mute" aria-hidden />
             </li>
           );
         })}
@@ -100,7 +104,7 @@ const READS: { name: string; swatch?: string; how: ReactNode; role: ReactNode }[
     how: <>Each heartbeat pushes a little more blood into the face, which makes the skin very slightly
       redder for a moment. The colour camera tracks that change across thousands of pixels and
       counts the beats per minute.</>,
-    role: 'Raises alarms',
+    role: <Tip term="raisesAlarms" className="tip-term">Raises alarms</Tip>,
   },
   {
     name: 'Breathing rate',
@@ -108,19 +112,21 @@ const READS: { name: string; swatch?: string; how: ReactNode; role: ReactNode }[
     how: <>The depth camera sees the chest move by a few millimetres with each breath. The thermal
       camera, when connected, sees the air below the nose warm on every breath out. Both are
       counted, then cross-checked.</>,
-    role: 'Raises alarms',
+    role: <Tip term="raisesAlarms" className="tip-term">Raises alarms</Tip>,
   },
   {
     name: 'Falls and chair exits',
     how: <>A pose model finds 17 points on the body (head, shoulders, hips, knees). A sudden drop
       followed by lying still is a fall; standing up from the chair is an exit.</>,
-    role: 'Raises alarms',
+    role: <Tip term="raisesAlarms" className="tip-term"
+               content="A confirmed fall raises a high-priority alarm. A chair exit is shown on the bed but does not raise an alarm by itself.">
+      Raises alarms</Tip>,
   },
   {
     name: 'Breathing synchrony',
     how: <>When breathing is easy, the chest and belly rise together. When it is laboured they start
       to see-saw. The depth camera compares the two.</>,
-    role: 'Flags on the bed view',
+    role: <Tip term="flagsBedView" className="tip-term">Flags on the bed view</Tip>,
   },
   {
     name: 'Pain expression',
@@ -297,7 +303,7 @@ export default function Home() {
           <Legend sample={<span className="hatch block h-7 w-24 rounded" />}
                   title="Hatched area" text="Cannot measure right now (face turned, out of frame). Never shown as a number." />
           <Legend sample={<Experimental />}
-                  title="Flask, dashed line" text="A learned model still being validated. Shown, but never used for alarms." />
+                  title="Flask, dashed line" text="A learned model still being validated. Where fused, it only counts when it agrees with the camera signal." />
         </div>
       </section>
 

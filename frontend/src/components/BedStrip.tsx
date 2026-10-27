@@ -1,13 +1,17 @@
 // BedStrip.tsx — one bed on the ward view, laid out like a monitor channel strip:
 // who/where | HR + 30 min | RR + 30 min | early warning | pain (experimental).
 // Quiet when stable, loud only on deviation. Collapses to a card on narrow screens.
+// The bed name is a stretched link covering the card, so the values inside stay hoverable and
+// focusable for their explanations while a click anywhere else still opens the bed.
 import { CameraOff, ChevronRight, Crosshair, OctagonAlert, TriangleAlert, Users } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../lib/api';
 import { PATIENT_STATE_TEXT, STATUS_TEXT } from '../lib/format';
+import { glossKey } from '../lib/glossary';
 import type { History, PatientSummary } from '../types';
 import Sparkline from './Sparkline';
+import { Tip } from './Tooltip';
 import VitalReadout from './VitalReadout';
 
 function useBedHistory(id: string, live: boolean) {
@@ -37,16 +41,17 @@ export default function BedStrip({ p }: { p: PatientSummary }) {
   const href = `/patients/${encodeURIComponent(p.patient_id)}`;
 
   return (
-    <Link to={href}
-          className={`group card relative block overflow-hidden transition-[background-color,border-color] duration-200 hover:bg-surface2 hover:border-linestrong ${alarm && !alarm.suppressed ? 'alarm-pulse' : ''}`}
-          style={{ borderColor: edge,
-                   ['--pulse-color' as string]: red ? 'color-mix(in srgb, var(--red) 40%, transparent)'
-                     : 'color-mix(in srgb, var(--amber) 35%, transparent)' }}
-          aria-label={`${p.label}. ${alarm ? `Alarm: ${alarm.title}.` : ''} Open bed.`}>
+    <div className={`group stretch-card card relative overflow-hidden transition-[background-color,border-color] duration-200 hover:bg-surface2 hover:border-linestrong ${
+           alarm && !alarm.suppressed ? (red ? 'alarm-flash-high' : 'alarm-flash-medium') : ''}`}
+         style={{ borderColor: edge,
+                  ['--pulse-color' as string]: red ? 'color-mix(in srgb, var(--red) 40%, transparent)'
+                    : 'color-mix(in srgb, var(--amber) 35%, transparent)' }}>
       {alarm && (
-        <div className={`flex items-center gap-2 px-4 py-2 border-b ${red ? 'band-red' : 'band-amber'}`}>
-          {red ? <OctagonAlert className="h-4 w-4 shrink-0" aria-hidden /> : <TriangleAlert className="h-4 w-4 shrink-0" aria-hidden />}
-          <span className="t-label t-strong truncate">{alarm.title}</span>
+        <div className={`flex items-center px-4 py-2 border-b ${red ? 'band-red' : 'band-amber'}`}>
+          <Tip term={red ? 'alarm_red' : 'alarm_amber'} content={alarm.message} className="flex items-center gap-2 min-w-0">
+            {red ? <OctagonAlert className="h-4 w-4 shrink-0" aria-hidden /> : <TriangleAlert className="h-4 w-4 shrink-0" aria-hidden />}
+            <span className="t-label t-strong truncate">{alarm.title}</span>
+          </Tip>
         </div>
       )}
 
@@ -54,19 +59,25 @@ export default function BedStrip({ p }: { p: PatientSummary }) {
         {/* who / where */}
         <div className="flex flex-col gap-1 min-w-0 col-span-2 xl:col-span-1">
           <div className="flex items-center gap-2">
-            <span className="t-title">{p.label}</span>
+            <Link to={href} className="stretch-link t-title rounded-md"
+                  aria-label={`${p.label}. ${alarm ? `Alarm: ${alarm.title}.` : ''} Open bed.`}>{p.label}</Link>
             {p.recording && (
-              <span className="chip" title="A comparison session is being recorded">
+              <Tip term="recording" className="chip">
                 <span className="h-2 w-2 rounded-full bg-red rec-dot" aria-hidden />Rec
-              </span>
+              </Tip>
             )}
           </div>
-          <span className="t-label text-ink2">
-            {running ? PATIENT_STATE_TEXT[p.fall.patient_state ?? 'UNKNOWN'] : STATUS_TEXT[p.status]}
+          <span className="flex">
+            <Tip className="t-label text-ink2"
+                 term={running ? glossKey('state_', p.fall.patient_state, 'state_UNKNOWN') : glossKey('status_', p.status, 'status_error')}>
+              {running ? PATIENT_STATE_TEXT[p.fall.patient_state ?? 'UNKNOWN'] : STATUS_TEXT[p.status]}
+            </Tip>
           </span>
           {running && (p.scene.staff_count ?? 0) > 0 && (
-            <span className="t-micro text-mute inline-flex items-center gap-1">
-              <Users className="h-3.5 w-3.5" aria-hidden />{p.scene.staff_count} with patient
+            <span className="flex">
+              <Tip term="staff" className="t-micro text-mute inline-flex items-center gap-1">
+                <Users className="h-3.5 w-3.5" aria-hidden />{p.scene.staff_count} with patient
+              </Tip>
             </span>
           )}
         </div>
@@ -77,25 +88,30 @@ export default function BedStrip({ p }: { p: PatientSummary }) {
               <div key={k} className="flex flex-col gap-2 min-w-0">
                 <VitalReadout kind={k} size="m" value={p[k].value} stale={p[k].stale} sqi={p[k].sqi}
                               subscore={p[k].subscore} reason={p[k].reason} apnea={k === 'rr' ? p.apnea : undefined} />
-                <Sparkline kind={k} t={hist?.t ?? []} v={hist?.[k] ?? []}
-                           label={`${k === 'hr' ? 'Heart rate' : 'Respiratory rate'}, ${p.label}`} />
+                <Tip term="sparkline" className="block w-full max-w-[220px]">
+                  <Sparkline kind={k} t={hist?.t ?? []} v={hist?.[k] ?? []}
+                             label={`${k === 'hr' ? 'Heart rate' : 'Respiratory rate'}, ${p.label}`} />
+                </Tip>
               </div>
             ))}
 
             <div className="flex flex-col gap-1.5 min-w-0 col-span-2 xl:col-span-1 xl:rule-l xl:pl-6">
               <div className="flex items-baseline gap-2">
-                <span className="t-eyebrow text-ink2">Early warning</span>
-                <span className={`t-num-s tnum ${level === 'red' ? 'text-red' : level === 'amber' ? 'text-amber' : ''}`}>
-                  {p.ews.total ?? '–'}
-                </span>
-                <span className={`t-label ${level === 'red' ? 'text-red' : level === 'amber' ? 'text-amber' : 'text-mute'}`}>
-                  {LEVEL_WORD[level]}
-                </span>
+                <Tip term="ews" className="t-eyebrow text-ink2 tip-term">Early warning</Tip>
+                <Tip term={glossKey('ews_', level, 'ews_unknown')} className="flex items-baseline gap-2"
+                     content={p.ews.total == null ? undefined : `Now ${p.ews.total} of 6 points.`}>
+                  <span className={`t-num-s tnum ${level === 'red' ? 'text-red' : level === 'amber' ? 'text-amber' : ''}`}>
+                    {p.ews.total ?? '–'}
+                  </span>
+                  <span className={`t-label ${level === 'red' ? 'text-red' : level === 'amber' ? 'text-amber' : 'text-mute'}`}>
+                    {LEVEL_WORD[level]}
+                  </span>
+                </Tip>
               </div>
               <p className="t-micro text-ink2 line-clamp-3">{p.ews.explanation || 'Vitals stable.'}</p>
               <div className="flex flex-wrap gap-2">
-                {p.taa_flag && <span className="chip band-amber">Paradoxical breathing</span>}
-                {acked && <span className="chip">Alarm acknowledged</span>}
+                {p.taa_flag && <Tip term="taaFlag" className="chip band-amber">Paradoxical breathing</Tip>}
+                {acked && <Tip term="acked" className="chip">Alarm acknowledged</Tip>}
               </div>
             </div>
           </>
@@ -113,16 +129,16 @@ export default function BedStrip({ p }: { p: PatientSummary }) {
 
         <div className="flex xl:flex-col items-center xl:items-end gap-3 col-span-2 xl:col-span-1">
           {running && p.pain?.available && p.pain.probability != null && (
-            <div className="flex flex-col xl:items-end" title="Experimental pain-expression model; never alarms">
+            <Tip term="pain" className="flex flex-col xl:items-end">
               <span className="t-eyebrow text-mute">Pain · experimental</span>
               <span className="font-cond font-semibold text-[22px] tnum leading-tight">
                 {Math.round(p.pain.probability * 100)}%
               </span>
-            </div>
+            </Tip>
           )}
           <ChevronRight className="h-5 w-5 text-mute group-hover:text-ink ml-auto xl:ml-0" aria-hidden />
         </div>
       </div>
-    </Link>
+    </div>
   );
 }

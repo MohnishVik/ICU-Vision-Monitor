@@ -98,7 +98,10 @@ class D435Stream:
         """Stop the pipeline cleanly."""
         self._running = False
         if self.pipeline:
-            self.pipeline.stop()
+            try:
+                self.pipeline.stop()
+            except RuntimeError:
+                pass        # start() never completed (no device): nothing to stop
             self.pipeline = None
         print("[D435] Pipeline stopped.")
 
@@ -161,58 +164,204 @@ class D435Stream:
         """
         Freeze exposure, gain and white balance; return the values applied.
 
-        auto_lock: let the camera auto-meter for auto_lock_settle_s while frames
-        flow, read what it converged to from the frame metadata, then switch auto
-        off and write those values back. fixed: use the configured values.
+        auto_lock: let the camera's own auto-exposure and auto white balance run for
+        auto_lock_settle_s and note how bright the picture became and its colour
+        cast. Many hosts (Windows without the RealSense metadata driver patch) do
+        not report the exposure the camera chose, so the result is reproduced by
+        measurement instead: with auto off, exposure/gain are stepped until the frame
+        is as bright as auto made it, and white balance is searched until the
+        red/blue balance matches. fixed: use the configured values.
         Exposure is capped at one frame period so the stream stays at `fps`.
         """
         mode = self.cfg.get("exposure_mode", "fixed")
         exposure = float(self.cfg["locked_exposure"])
         gain = self.cfg.get("locked_gain")
         wb = float(self.cfg["locked_white_balance"])
+        e_max = 10000.0 / max(int(fps), 1)          # exposure units are 0.1 ms
 
         if self._supports(color_sensor, rs.option.auto_exposure_priority):
             # 0 = keep the frame rate; never stretch exposure past a frame
             color_sensor.set_option(rs.option.auto_exposure_priority, 0)
+        # gamma/brightness persist in the camera between runs: start every run neutral
+        self._reset_tone(color_sensor)
 
+        applied = {"mode": mode}
         if mode == "auto_lock":
             color_sensor.set_option(rs.option.enable_auto_exposure, 1)
             color_sensor.set_option(rs.option.enable_auto_white_balance, 1)
             settle_until = time.monotonic() + float(self.cfg.get("auto_lock_settle_s", 2.5))
-            last = None
+            frames = []
             while time.monotonic() < settle_until:
-                try:
-                    frames = self.pipeline.wait_for_frames(timeout_ms=2000)
-                except RuntimeError:
-                    continue
-                color_frame = frames.get_color_frame()
-                if color_frame:
-                    last = color_frame
-            if last is not None:
-                exposure = self._metadata(last, rs.frame_metadata_value.actual_exposure, exposure)
-                gain = self._metadata(last, rs.frame_metadata_value.gain_level, gain)
-                wb = self._metadata(last, rs.frame_metadata_value.white_balance, wb)
+                img = self._next_color()
+                if img is not None:
+                    frames = (frames + [img])[-5:]
+            color_sensor.set_option(rs.option.enable_auto_exposure, 0)
+            color_sensor.set_option(rs.option.enable_auto_white_balance, 0)
+
+            if frames:
+                auto_luma = float(np.mean([self._luma(f) for f in frames]))
+                auto_rb = float(np.mean([self._red_blue(f) for f in frames]))
+                target = self.cfg.get("target_luma") or auto_luma
+                target = float(np.clip(target, 30.0, 200.0))
+                gain_floor = float(gain) if gain is not None else 64.0
+                exposure, gain = self._match_brightness(color_sensor, target, exposure,
+                                                        gain_floor, gain_floor, e_max)
+                applied.update(self._lift_tone(color_sensor, target))
+                wb = self._match_white_balance(color_sensor, auto_rb, wb)
+                applied.update(auto_luma=round(auto_luma, 1), target_luma=round(target, 1))
             else:
                 print("[D435] WARN: no frames while metering; using fixed values.")
 
         color_sensor.set_option(rs.option.enable_auto_exposure, 0)
         color_sensor.set_option(rs.option.enable_auto_white_balance, 0)
-
-        frame_period = 10000.0 / max(int(fps), 1)   # exposure units are 0.1 ms
-        exposure = min(exposure, frame_period)
-        applied = {"mode": mode}
-        for name, option, value in (("exposure", rs.option.exposure, exposure),
+        for name, option, value in (("exposure", rs.option.exposure, min(exposure, e_max)),
                                     ("gain", rs.option.gain, gain),
                                     ("white_balance", rs.option.white_balance, wb)):
             if value is None or not self._supports(color_sensor, option):
                 continue
-            rng = color_sensor.get_option_range(option)
-            value = float(np.clip(value, rng.min, rng.max))
-            if rng.step > 0:
-                value = rng.min + round((value - rng.min) / rng.step) * rng.step
-            color_sensor.set_option(option, value)
-            applied[name] = value
+            applied[name] = self._set(color_sensor, option, value)
         return applied
+
+    # ── metering by measurement ───────────────────────────────────────────────
+
+    def _match_brightness(self, sensor, target: float, exposure: float, gain: float,
+                          gain_floor: float, e_max: float) -> tuple[float, float]:
+        """
+        Step exposure (first) and gain (only once exposure is at its cap) until the
+        mean luma is within 6 % of `target`. Brightness is close to proportional to
+        exposure x gain, so each step scales by target / measured.
+        """
+        has_gain = self._supports(sensor, rs.option.gain)
+        g_max = sensor.get_option_range(rs.option.gain).max if has_gain else gain
+        for _ in range(8):
+            exposure = self._set(sensor, rs.option.exposure, min(exposure, e_max))
+            if has_gain:
+                gain = self._set(sensor, rs.option.gain, gain)
+            luma = self._measure(self._luma)
+            if luma is None or abs(luma - target) <= 0.06 * target:
+                break
+            want = exposure * gain * float(np.clip(target / max(luma, 1.0), 0.25, 4.0))
+            if want > exposure * gain:                     # brighter: exposure, then gain
+                exposure = min(want / gain, e_max)
+                if has_gain and exposure >= e_max:
+                    gain = min(want / exposure, g_max)
+            else:                                          # darker: gain down to floor, then exposure
+                if has_gain and gain > gain_floor:
+                    gain = max(want / exposure, gain_floor)
+                exposure = max(want / gain, 1.0)
+            if exposure >= e_max and gain >= g_max and luma < target:
+                exposure, gain = e_max, g_max              # as bright as 30 fps allows
+                self._set(sensor, rs.option.exposure, exposure)
+                if has_gain:
+                    self._set(sensor, rs.option.gain, gain)
+                break
+        return exposure, gain
+
+    def _reset_tone(self, sensor) -> None:
+        """Gamma and brightness back to the configured (neutral) values."""
+        for key, option, default in (("locked_gamma", rs.option.gamma, 300),
+                                     ("locked_brightness", rs.option.brightness, 0)):
+            if self._supports(sensor, option):
+                self._set(sensor, option, self.cfg.get(key, default))
+
+    def _lift_tone(self, sensor, target: float) -> dict:
+        """
+        In a dim room the camera's auto mode is brighter than any manual exposure x gain
+        at full frame rate (it adds an internal boost it does not expose). When the
+        picture is still too dark at the exposure and gain caps, raise gamma (lifts
+        shadows and mid-tones) and then brightness (a constant offset) just enough.
+        Both are fixed for the run, so they add no flicker.
+        """
+        lifted = {}
+        luma = self._measure(self._luma)
+        for name, option in (("gamma", rs.option.gamma), ("brightness", rs.option.brightness)):
+            if luma is None or luma >= 0.94 * target or not self._supports(sensor, option):
+                break
+            rng = sensor.get_option_range(option)
+            lo, hi = sensor.get_option(option), float(rng.max)
+            best = lo
+            for _ in range(6):
+                mid = self._set(sensor, option, (lo + hi) / 2.0)
+                luma = self._measure(self._luma)
+                if luma is None:
+                    break
+                if luma < target:
+                    lo, best = mid, mid
+                else:
+                    hi = mid
+                if abs(luma - target) <= 0.06 * target or hi - lo <= max(rng.step, 1.0):
+                    best = mid
+                    break
+            if luma is not None and luma < target:
+                best = hi                                   # still short: take the brighter end
+            lifted[name] = self._set(sensor, option, best)
+            luma = self._measure(self._luma)
+        return lifted
+
+    def _match_white_balance(self, sensor, target_rb: float, wb: float) -> float:
+        """Bisect the white-balance setting until red/blue matches what auto WB produced."""
+        if not self._supports(sensor, rs.option.white_balance):
+            return wb
+        rng = sensor.get_option_range(rs.option.white_balance)
+        lo, hi = float(rng.min), float(rng.max)
+
+        def ratio_at(k: float) -> float | None:
+            self._set(sensor, rs.option.white_balance, k)
+            return self._measure(self._red_blue)
+
+        r_lo, r_hi = ratio_at(lo), ratio_at(hi)
+        if r_lo is None or r_hi is None or r_lo == r_hi:
+            return wb
+        rising = r_hi > r_lo
+        if (target_rb <= min(r_lo, r_hi)) or (target_rb >= max(r_lo, r_hi)):
+            return lo if abs(target_rb - r_lo) < abs(target_rb - r_hi) else hi
+        for _ in range(8):
+            mid = (lo + hi) / 2.0
+            r = ratio_at(mid)
+            if r is None:
+                break
+            if (r < target_rb) == rising:
+                lo = mid
+            else:
+                hi = mid
+            if hi - lo <= max(rng.step, 10.0) * 2:
+                break
+        return (lo + hi) / 2.0
+
+    def _next_color(self) -> np.ndarray | None:
+        try:
+            frames = self.pipeline.wait_for_frames(timeout_ms=2000)
+        except RuntimeError:
+            return None
+        color = frames.get_color_frame()
+        return np.asanyarray(color.get_data()) if color else None
+
+    def _measure(self, stat, skip: int = 4, keep: int = 2) -> float | None:
+        """Let a new setting reach the sensor (`skip` frames), then average `keep` frames."""
+        for _ in range(skip):
+            self._next_color()
+        vals = [stat(img) for img in (self._next_color() for _ in range(keep)) if img is not None]
+        return float(np.mean(vals)) if vals else None
+
+    @staticmethod
+    def _luma(bgr: np.ndarray) -> float:
+        m = bgr.reshape(-1, 3).mean(axis=0)
+        return float(0.114 * m[0] + 0.587 * m[1] + 0.299 * m[2])
+
+    @staticmethod
+    def _red_blue(bgr: np.ndarray) -> float:
+        m = bgr.reshape(-1, 3).mean(axis=0)
+        return float((m[2] + 1.0) / (m[0] + 1.0))
+
+    @staticmethod
+    def _set(sensor, option, value: float) -> float:
+        """Clamp to the option's range, snap to its step, write it, return what was written."""
+        rng = sensor.get_option_range(option)
+        value = float(np.clip(value, rng.min, rng.max))
+        if rng.step > 0:
+            value = rng.min + round((value - rng.min) / rng.step) * rng.step
+        sensor.set_option(option, value)
+        return value
 
     @staticmethod
     def _supports(sensor: rs.sensor, option) -> bool:
@@ -220,17 +369,6 @@ class D435Stream:
             return bool(sensor.supports(option))
         except RuntimeError:
             return False
-
-    @staticmethod
-    def _metadata(frame, key, fallback):
-        """Read one frame-metadata value, or `fallback` if the firmware lacks it."""
-        try:
-            if frame.supports_frame_metadata(key):
-                return float(frame.get_frame_metadata(key))
-        except RuntimeError:
-            pass
-        return fallback
-
     @staticmethod
     def _get_color_sensor(device: rs.device) -> rs.sensor:
         """Return the RGB camera sensor, raise if it is not found."""
@@ -257,6 +395,10 @@ class D435Stream:
         print(f"  Exposure         : {color_sensor.get_option(rs.option.exposure)}"
               f"  (locked at {self.locked.get('exposure')})")
         print(f"  Gain             : {self.locked.get('gain', 'n/a')}")
+        if "auto_luma" in self.locked:
+            print(f"  Brightness       : target {self.locked['target_luma']} (camera auto reached "
+                  f"{self.locked['auto_luma']}), gamma {self.locked.get('gamma', 'default')}, "
+                  f"offset {self.locked.get('brightness', 'default')}")
         print(f"  Auto-WB          : {color_sensor.get_option(rs.option.enable_auto_white_balance)}"
               "  (must be 0)")
         print(f"  White Balance    : {color_sensor.get_option(rs.option.white_balance)}"

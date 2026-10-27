@@ -25,7 +25,7 @@
   --line-strong: #423e38;
   --ink: #f2ede4;
   --ink-2: #bdb4a6;
-  --mute: #8c8478;
+  --mute: #9a9285;            /* >= 4.5:1 on bg, surface and surface-2 */
   --accent: #f2ede4;          /* primary action: bone on graphite */
   --on-accent: #151412;
   --hr: #6fd394;
@@ -46,6 +46,9 @@
   /* categorical, for comparing sources of one vital (always paired with dash + label) */
   --s1: #f2ede4;  --s2: #d98a52;  --s3: #a9bd63;  --s4: #db8f8f;  --s5: #c6a47a;
   --brand: #d9c3a0;           /* the logo, in sand: one colour, never a status */
+  --edge: rgba(255, 244, 228, .045);
+  --shade-1: rgba(0, 0, 0, .35);
+  --shade-2: rgba(0, 0, 0, .55);
 }
 
 :root[data-theme='light'] {
@@ -58,14 +61,14 @@
   --line-strong: #c9c2b6;
   --ink: #1c1a17;
   --ink-2: #514c44;
-  --mute: #6f685d;
+  --mute: #6a6358;
   --accent: #1c1a17;
   --on-accent: #fdfcf9;
   --hr: #17803f;
   --hr-line: #1f9a4d;
   --rr: #8a6a00;
   --rr-line: #b08a10;
-  --amber: #b85a00;
+  --amber: #a34f00;           /* dark enough for small orange text (>= 4.5:1) */
   --amber-ink: #7a3c00;
   --amber-bg: #fdebd6;
   --amber-line: #eab27a;
@@ -78,6 +81,9 @@
   --axis: #c9c2b6;
   --s1: #1c1a17;  --s2: #b0601f;  --s3: #5f7a14;  --s4: #b14a4a;  --s5: #8a6a3f;
   --brand: #6e5233;
+  --edge: rgba(255, 255, 255, .7);
+  --shade-1: rgba(60, 45, 25, .06);
+  --shade-2: rgba(60, 45, 25, .14);
 }
 
 html, body, #root { height: 100%; }
@@ -120,15 +126,20 @@ a { text-underline-offset: 3px; text-decoration-thickness: 1px; }
 
 /* ------------------------------------------------------------------ motion --
    Only motion that carries information: the HR dot beats at the measured
-   rate, the RR bar breathes at the measured rate, active alarms pulse.
-   All of it stops for prefers-reduced-motion and when a value goes stale.  */
+   rate, the RR bar breathes at the measured rate, active alarms flash.
+   All of it stops for prefers-reduced-motion and when a value goes stale.
+
+   Alarm visual signals follow the spirit of IEC 60601-1-8: high priority (red)
+   flashes at 2 Hz, medium priority (orange) at 0.5 Hz, so priority reads from
+   the rhythm as well as from the colour, the icon and the words.            */
 @keyframes beat { 0%, 100% { transform: scale(1); opacity: .5; } 12% { transform: scale(1.4); opacity: 1; } 30% { transform: scale(1); opacity: .7; } }
 @keyframes breathe { 0%, 100% { transform: scaleX(.18); } 45% { transform: scaleX(1); } }
 @keyframes alarm-pulse { 0%, 100% { box-shadow: 0 0 0 0 var(--pulse-color, transparent); } 50% { box-shadow: 0 0 0 4px var(--pulse-color, transparent); } }
 @keyframes rec { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }
 .beat { animation: beat var(--period, 1s) ease-out infinite; transform-origin: center; }
 .breathe { animation: breathe var(--period, 4s) ease-in-out infinite; transform-origin: left center; }
-.alarm-pulse { animation: alarm-pulse 1.2s ease-in-out infinite; }
+.alarm-flash-high { animation: alarm-pulse .5s ease-in-out infinite; }
+.alarm-flash-medium { animation: alarm-pulse 2s ease-in-out infinite; }
 .rec-dot { animation: rec 1.6s ease-in-out infinite; }
 
 /* Route change: the new view settles in from a hair below. Starts visible enough
@@ -141,12 +152,34 @@ a { text-underline-offset: 3px; text-decoration-thickness: 1px; }
 .unveil { animation: unveil 1.1s cubic-bezier(.16, 1, .3, 1) .1s both; }
 
 @media (prefers-reduced-motion: reduce) {
-  .beat, .breathe, .alarm-pulse, .rec-dot, .page-settle, .unveil { animation: none !important; }
+  .beat, .breathe, .alarm-flash-high, .alarm-flash-medium, .rec-dot, .page-settle, .unveil { animation: none !important; }
   .breathe { transform: scaleX(.6); }
 }
 
 /* ------------------------------------------------------------------ surfaces */
-.card { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; }
+/* Cards sit a hair above the page: a 1px top highlight (light catching the edge) and a soft,
+   offset shadow. Quiet enough for a night ward, but the layers read at a glance. */
+.card {
+  background: var(--surface); border: 1px solid var(--line); border-radius: 12px;
+  box-shadow: inset 0 1px 0 var(--edge), 0 1px 2px var(--shade-1), 0 10px 28px -16px var(--shade-2);
+}
+.skeleton {
+  border-radius: 12px; background: var(--surface);
+  background-image: linear-gradient(100deg, transparent 30%, color-mix(in srgb, var(--ink) 5%, transparent) 50%, transparent 70%);
+  background-size: 220% 100%; animation: shimmer 1.4s ease-in-out infinite;
+}
+@keyframes shimmer { from { background-position: 120% 0; } to { background-position: -120% 0; } }
+
+/* Lists of beds enter once, top to bottom, so the eye follows the order. */
+@keyframes rise { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+.stagger > * { animation: rise .42s cubic-bezier(.16, 1, .3, 1) both; }
+.stagger > *:nth-child(2) { animation-delay: 50ms; }
+.stagger > *:nth-child(3) { animation-delay: 100ms; }
+.stagger > *:nth-child(4) { animation-delay: 150ms; }
+.stagger > *:nth-child(n+5) { animation-delay: 200ms; }
+@keyframes ping { 0% { transform: scale(1); opacity: .6; } 70%, 100% { transform: scale(2.4); opacity: 0; } }
+.live-ping { animation: ping 2s cubic-bezier(0, 0, .2, 1) infinite; }
+@media (prefers-reduced-motion: reduce) { .stagger > *, .skeleton, .live-ping { animation: none !important; } }
 .card-pad { padding: 18px 20px; }
 .well { background: var(--surface-2); border-radius: 8px; }
 .rule-t { border-top: 1px solid var(--line); }
@@ -163,12 +196,21 @@ a { text-underline-offset: 3px; text-decoration-thickness: 1px; }
   min-height: 40px; padding: 0 14px; border-radius: 8px;
   font: 600 14.5px/1 'IBM Plex Sans Condensed', system-ui, sans-serif; letter-spacing: .01em;
   border: 1px solid var(--line-strong); color: var(--ink); background: var(--surface-2);
-  transition: background-color .15s ease, border-color .15s ease, color .15s ease;
+  transition: background-color .15s ease, border-color .15s ease, color .15s ease, transform .08s ease;
   cursor: pointer; white-space: nowrap; text-decoration: none;
 }
 .btn:hover { background: var(--surface-3); }
+.btn:active:not(:disabled) { transform: translateY(1px); }
 .btn:disabled { opacity: .45; cursor: not-allowed; }
 .btn-sm { min-height: 34px; padding: 0 10px; font-size: 13.5px; }
+/* Hit areas reach 40 px even where the drawn control is smaller: an invisible
+   halo extends the pointer target without changing the layout. */
+.btn-sm, .seg > button, .hit { position: relative; }
+.btn-sm::after, .seg > button::after, .hit::after {
+  content: ''; position: absolute;
+  top: min(0px, calc((100% - 40px) / 2)); bottom: min(0px, calc((100% - 40px) / 2));
+  left: min(0px, calc((100% - 40px) / 2)); right: min(0px, calc((100% - 40px) / 2));
+}
 .btn-primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
 .btn-primary:hover { background: color-mix(in srgb, var(--accent) 86%, var(--bg)); }
 .btn-ghost { background: transparent; border-color: transparent; color: var(--ink-2); }
@@ -206,6 +248,41 @@ table.data th { font: 600 12px/1.2 'IBM Plex Sans Condensed', sans-serif; letter
 table.data td { padding: 9px 10px; border-bottom: 1px solid var(--line); font-size: 14px; vertical-align: middle; }
 table.data tr:last-child td { border-bottom: none; }
 table.data .num { text-align: right; font-variant-numeric: tabular-nums; }
+
+/* ------------------------------------------------------------------ explanations --
+   Tooltips: a note raised one step above the page (surface-3, strong edge, soft
+   offset shadow), growing out of the side it is attached to. No motion under
+   prefers-reduced-motion. Text is ink-2 / ink only: both clear 4.5:1 on surface-3. */
+.tip {
+  position: fixed; z-index: 60; width: max-content; max-width: min(320px, calc(100vw - 16px));
+  padding: 10px 12px; border-radius: 8px; background: var(--surface-3); border: 1px solid var(--line-strong);
+  color: var(--ink-2); font: 400 14px/1.45 'Atkinson Hyperlegible', system-ui, sans-serif; text-align: left;
+  letter-spacing: normal; text-transform: none; white-space: normal; overflow-wrap: break-word;
+  box-shadow: 0 1px 2px var(--shade-1), 0 14px 32px -12px var(--shade-2);
+  animation: tip-in .14s cubic-bezier(.16, 1, .3, 1) both;
+}
+.tip > * + * { margin-top: 4px; }
+.tip[data-side='top'] { transform-origin: 50% 100%; --tip-dy: 3px; }
+.tip[data-side='bottom'] { transform-origin: 50% 0; --tip-dy: -3px; }
+.tip[data-side='right'] { transform-origin: 0 50%; --tip-dy: 0px; }
+@keyframes tip-in { from { opacity: 0; transform: translateY(var(--tip-dy, 0)) scale(.96); } to { opacity: 1; transform: none; } }
+.tip-target { cursor: help; border-radius: 4px; -webkit-tap-highlight-color: transparent; }
+/* a label with a definition behind it: dotted underline, as for an abbreviation */
+.tip-term { text-decoration: underline dotted; text-decoration-thickness: 1px; text-underline-offset: 3px;
+  text-decoration-color: color-mix(in srgb, currentColor 50%, transparent); }
+.infotip { display: inline-grid; place-items: center; width: 40px; height: 40px; margin: -10px -10px; flex: none;
+  border-radius: 8px; color: var(--mute); cursor: help; transition: color .15s ease; -webkit-tap-highlight-color: transparent; }
+.infotip:hover, .infotip[data-tip-open] { color: var(--ink); }
+.infotip svg { width: 16px; height: 16px; }
+@media (prefers-reduced-motion: reduce) { .tip { animation: none; } }
+
+/* A whole card that opens something, with explainable values inside it: the link's
+   ::after covers the card, and the values sit above it so they can be hovered and
+   focused on their own. The ring is drawn around the card. */
+.stretch-link::after { content: ''; position: absolute; inset: 0; border-radius: inherit; }
+.stretch-link:focus-visible { outline: none; }
+.stretch-link:focus-visible::after { outline: 2px solid var(--ink); outline-offset: 2px; border-radius: 12px; }
+.stretch-card .tip-target, .stretch-card [aria-describedby] { position: relative; z-index: 1; }
 
 /* utilities last, so layout utilities (hidden, flex-row, w-*) always beat the component classes above */
 @tailwind utilities;

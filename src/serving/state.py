@@ -74,6 +74,16 @@ def to_jsonable(obj: Any, _depth: int = 0) -> Any:
     return str(obj)
 
 
+def learned_fuse_sources(signal_cfg: dict, known: tuple) -> tuple:
+    """signal.yaml learned.fuse: true (all), false (none) or a list of source names."""
+    f = (signal_cfg.get("learned") or {}).get("fuse", False)
+    if f is True:
+        return tuple(known)
+    if isinstance(f, (list, tuple)):
+        return tuple(s for s in known if s in f)
+    return ()
+
+
 def measurement_dict(m: Optional[Measurement]) -> Optional[dict]:
     if m is None:
         return None
@@ -136,9 +146,10 @@ class VitalsPipeline:
                  mode: str = "camera", simulated: bool = False, stale_s: float = 5.0,
                  history_s: float = 4 * 3600.0, sample_period_s: float = 1.0):
         sig = signal_cfg or {}
-        self.learned_fused = bool((sig.get("learned") or {}).get("fuse", False))
-        self.RR_SOURCES = self.RR_BASE + (self.RR_LEARNED if self.learned_fused else ())
-        self.HR_SOURCES = self.HR_BASE + (self.HR_LEARNED if self.learned_fused else ())
+        self.fused_learned = learned_fuse_sources(sig, self.RR_LEARNED + self.HR_LEARNED)
+        self.learned_fused = bool(self.fused_learned)
+        self.RR_SOURCES = self.RR_BASE + tuple(s for s in self.RR_LEARNED if s in self.fused_learned)
+        self.HR_SOURCES = self.HR_BASE + tuple(s for s in self.HR_LEARNED if s in self.fused_learned)
         self.patient_id, self.label, self.mode, self.simulated = patient_id, label, mode, simulated
         self.rr_fuse = FusionConfig(
             sqi_min=float(((sig.get("rr") or {}).get("quality") or {}).get("peak_power_frac_min", 0.30)),
@@ -149,6 +160,9 @@ class VitalsPipeline:
         # module sqi is already gated inside the modules; fusion's gate is a second, lower bar
         self.rr_fuse.sqi_min = min(self.rr_fuse.sqi_min, 0.30)
         self.hr_fuse.sqi_min = min(self.hr_fuse.sqi_min, 0.25)
+        # learned paths may only add to the DSP reading, never veto it
+        self.rr_fuse.secondary = frozenset(self.RR_LEARNED)
+        self.hr_fuse.secondary = frozenset(self.HR_LEARNED)
         self.rr_kf, self.hr_kf = VitalKalman(RR_KALMAN), VitalKalman(HR_KALMAN)
         self.rr_trend, self.hr_trend = TrendTracker(), TrendTracker()
         self.watch = StalenessWatchdog(stale_s)
@@ -328,7 +342,7 @@ class VitalsPipeline:
             "subscore": ews.subscores.get(key),
             "sources": {s: {**d, "role": "fused" if s in fused_set else "display"}
                         for s in sources if (d := measurement_dict(self._fresh(s, now))) is not None},
-            "learned_fused": self.learned_fused,
+            "learned_fused": bool(fused_set & set(self.RR_LEARNED + self.HR_LEARNED)),
             **(extra or {}),
         }
 

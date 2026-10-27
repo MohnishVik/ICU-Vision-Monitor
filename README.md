@@ -58,7 +58,7 @@ estimator, including the experimental learned models, against reference values y
 | **Falls / chair exit** | YOLOv8 pose keypoints → kinematics + state machine + GRU classifier, confirmed by a hybrid gate | posture state, confirmed falls |
 | **Breathing synchrony (TAA)** | Phase difference between chest and abdomen depth signals | paradoxical-breathing flag |
 | **Pain proxy** | MobileNetV3-Small on the face crop, trained on SynPAIN (`SynPain.ipynb`) | probability of a pain expression; **experimental, never alarms** |
-| **Learned RR / HR** | 1-D CNNs (LBRD-IC; D435 fine-tune) and EfficientPhys (UBFC-rPPG), each fed exactly its training input | shown and logged beside the signal-processing values; **experimental, not fused by default** |
+| **Learned RR / HR** | 1-D CNNs (LBRD-IC; D435 fine-tune) and EfficientPhys (UBFC-rPPG), each fed exactly its training input | shown and logged beside the signal-processing values; LBRD-IC CNN and EfficientPhys are **fused as secondary paths** (dropped when they disagree), the D435 CNN is shown only; **experimental** |
 
 Every number carries a **signal quality index (SQI)**. When a vital cannot be measured, the
 system says so and why ("signal too weak", "sensors disagree") instead of guessing.
@@ -149,14 +149,41 @@ exposure is never left on auto while monitoring.
 
 | Mode | What happens at startup | Use it when |
 |---|---|---|
-| `auto_lock` (default) | Auto-exposure and auto white balance run for `auto_lock_settle_s` (2.5 s) so the camera meters the room, then the values it settled on are read from the frame metadata, auto is switched off and those values are frozen for the whole run | Lighting differs between sessions (day, night, lamp on) |
+| `auto_lock` (default) | Auto-exposure and auto white balance run for `auto_lock_settle_s` (2.5 s) and the brightness and red/blue balance they produce are measured. Auto is switched off and the same picture is rebuilt by hand: exposure, then gain, then (in a dim room) gamma and brightness are stepped until the frame is as bright as auto made it, and white balance is bisected until the colour matches. Those values are frozen for the whole run (about 7 s at startup) | Lighting differs between sessions (day, night, lamp on) |
 | `fixed` | `locked_exposure` (0.1 ms units), `locked_gain` and `locked_white_balance` are written directly | You need byte-identical settings across recordings |
+
+Why measure instead of asking the camera? On Windows without the RealSense metadata driver
+patch the camera never reports what auto chose (it keeps answering 156), and in a dim room its
+auto mode also applies an internal boost no manual setting exposes, which is why gamma and
+brightness may be raised. Set `target_luma` to choose a brightness yourself.
 
 Exposure is capped at one frame period (33.3 ms at 30 fps) so the frame rate never drops, and
 `auto_exposure_priority` is turned off for the same reason. The locked values are printed at
 startup. The D435-trained respiratory model reads depth, which the colour exposure does not affect,
 and the heart-rate methods use relative colour change, so re-metering per session does not
 invalidate any weights. Start the monitor with the room lit the way it will be during the session.
+
+### Getting a strong signal
+
+Signal quality (the bars next to each vital) says how clearly one rhythm stands out from
+everything else in the last 20–30 s. What lowers it, and what to do:
+
+| Cause | What the screen says | Fix |
+|---|---|---|
+| Patient moving (turning, talking, settling) | *Patient moving*: the window restarts and refills in 20 s (breathing) or 10 s (heart rate) | Wait; nothing to adjust |
+| Face too dark for heart rate | *Face too dark* | Diffuse light facing the patient (a lamp behind the camera, not overhead only); keep the face larger than ~120 px across (camera 1.0–1.5 m away) |
+| Chest hidden by blanket folds or arms | *Signal too weak* | Keep the sternum area in view |
+
+Heart rate from colour depends most on light. Each heartbeat changes skin colour by well under
+1 %. When the face averages below about 80 / 255 even with exposure and gain at maximum, sensor
+noise is larger than that change, and the reading is withheld rather than guessed.
+
+Breathing processing (measured on the D435 with paced breathing; see `config/signal.yaml`):
+posture drift slower than 4.8 /min is removed with a high-pass filter before the spectrum, the
+spectrum uses 20 s segments so slow breaths are resolved, only chest pixels within 15 cm of the
+body's median depth are averaged, and movement restarts the window. Against counted breaths this
+raised the quality score from 29 % to 85 % and the share of time with a reading from 77 % to 93 %,
+and removed false readings caused by the patient settling into the chair.
 
 ---
 
@@ -171,21 +198,25 @@ invalidate any weights. Start the monitor with the room lit the way it will be d
 | Fall Detection | YOLOv8n-pose → kinematics → state machine + GRU classifier → hybrid confirmation gate | `yolov8n-pose.pt`, `fall_gru_pseudo.pt` | Running |
 | Breathing synchrony (TAA) | Hilbert phase difference, chest vs abdomen depth | none | Running |
 | Pain Assessment | MobileNetV3-Small on the face crop, notebook eval transform reproduced exactly, 5-s average, threshold 0.2962 | `pain_mobilenetv3_synpain.pth` | Running, **experimental** (never alarms) |
-| Learned RR | `Resp1DCNN` on 10 s of whole-frame green (LBRD-IC) and on 10 s of chest depth (D435 fine-tune) | `rr_cnn1d_lbrdic.pth`, `rr_cnn1d_d435_finetuned.pth` | Running, **experimental**, shown only |
-| Learned HR | EfficientPhys on 72×72 face frames, 72-frame chunks, Welch peak | `hr_efficientphys_ubfc.pth` | Running, **experimental**, shown only |
+| Learned RR | `Resp1DCNN` on 10 s of whole-frame green (LBRD-IC) and on 10 s of chest depth (D435 fine-tune) | `rr_cnn1d_lbrdic.pth`, `rr_cnn1d_d435_finetuned.pth` | Running, **experimental**; LBRD-IC fused as secondary, D435 shown only |
+| Learned HR | EfficientPhys on 72×72 face frames, 72-frame chunks, Welch peak | `hr_efficientphys_ubfc.pth` | Running, **experimental**, fused as secondary |
 
 The signal-processing paths are primary because they are transparent and tunable. The learned
-estimators run alongside: they are shown on the bed page and logged by the session recorder, but
-they join the fused value (and therefore the early-warning score and alarms) only when
-`learned.fuse: true` is set in `config/signal.yaml`, which should wait until the
-[comparison](#recording-and-comparing-estimators) shows they beat the signal-processing paths.
+estimators run alongside: they are shown on the bed page and logged by the session recorder.
+`learned.fuse` in `config/signal.yaml` chooses which of them also join the fused value: `true`
+(all), `false` (none) or a list. The shipped config fuses `rr.cnn_lbrd` and `hr.efficientphys`.
+Fused learned paths are **secondary**: each second, one that differs from the median
+signal-processing reading by more than the agreement gate (4 br/min, 10 bpm) is dropped from
+that update, so a biased network can pull an agreeing reading slightly but can never blank or
+override the vital. When no signal-processing path has a value, the learned paths fuse alone.
+Check them with a [comparison](#recording-and-comparing-estimators) session.
 
 ### Trained weights (model registry)
 
 | Module | Weights | Status |
 |--------|---------|--------|
-| Respiratory Rate (learned) | `rr_cnn1d_lbrdic.pth`, `rr_cnn1d_d435_finetuned.pth` | Experimental, shown only |
-| Heart Rate (learned) | `hr_efficientphys_ubfc.pth` | Experimental, shown only |
+| Respiratory Rate (learned) | `rr_cnn1d_lbrdic.pth`, `rr_cnn1d_d435_finetuned.pth` | Experimental; LBRD-IC fused (secondary), D435 shown only |
+| Heart Rate (learned) | `hr_efficientphys_ubfc.pth` | Experimental, fused (secondary) |
 | Fall Detection | `fall_gru_pseudo.pt` (+ `fall_gru_pseudo_e1.pt`) | Running |
 | Pain Assessment | `pain_mobilenetv3_synpain.pth` | SynPAIN part 1 only; experimental; UNBC/BioVid pending |
 

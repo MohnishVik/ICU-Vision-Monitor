@@ -14,10 +14,14 @@ rr:
       y: [0.54, 0.82]
     min_valid_depth_units: 5
     min_valid_pixels: 30
+    body_band_mm: 150            # average only chest pixels within this of the median (drops wall/chair)
+    motion_mm: 20                # half-second depth step that means the patient moved -> window restarts
     window_s: 30
     update_every_s: 1.0
     min_fill_s: 20
-    detrend: linear
+    detrend: linear              # used only when highpass_hz is unset
+    highpass_hz: 0.08            # drop posture drift slower than 4.8 /min before the spectrum
+    segment_s: 20                # Welch segment: 20 s holds 3+ breaths at 10 /min
     smooth_s: 0.35
     band_hz: [0.067, 0.70]       # 4-42 BrPM
     psd: { window: hann, nfft: 16384 }
@@ -32,7 +36,7 @@ rr:
   quality:
     peak_power_frac_min: 0.30    # TUNE: below this -> value=None (no reliable rate)
     peak_power_frac_good: 0.60   # TUNE: sqi reaches 1.0 here
-    peak_half_width_hz: 0.03
+    peak_half_width_hz: 0.05     # a 20 s Hann segment's main lobe is ~0.1 Hz wide; 0.03 cut real peaks
 
   apnea:
     window_s: 10
@@ -59,6 +63,8 @@ hr:
     update_every_s: 1.0
     min_fill_s: 10
     band_hz: [0.67, 3.0]         # 40-180 BPM
+    motion_rel: 0.05             # half-second skin-brightness step (5 %) that means movement
+    low_light_luma: 60           # face darker than this (0-255) -> "Face too dark" when rejected
     bandpass_order: 2
     psd: { window: hann, nfft: 16384 }
     fallback_roi_frac:
@@ -133,8 +139,11 @@ pain:
 # fuse: false -> shown next to the signal-processing value and logged for comparison,
 #                but kept out of the fused RR/HR, the early-warning score and alarms.
 # Set fuse: true only after scripts/compare_sessions.py shows they beat the DSP paths.
+# fuse can also list sources: only those join. Fused learned paths are secondary: if one
+# disagrees with the signal-processing reading by more than the agreement gate it is
+# dropped for that second, so it can add to the reading but never blank it.
 learned:
-  fuse: false
+  fuse: [rr.cnn_lbrd, hr.efficientphys]
   device: "auto"
   rr_lbrd:
     weights: "models/public/rr_cnn1d_lbrdic.pth"           # 250 samples = 10 s @ 25 Hz, whole-frame green

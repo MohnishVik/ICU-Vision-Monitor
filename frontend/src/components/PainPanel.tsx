@@ -3,6 +3,7 @@
 // plainly. It is never scored and never raises an alarm.
 import { FlaskConical, ScanFace } from 'lucide-react';
 import type { PainInfo } from '../types';
+import { InfoTip, Tip } from './Tooltip';
 import { Experimental, Quality } from './ui';
 
 export default function PainPanel({ pain }: { pain: PainInfo | null | undefined }) {
@@ -13,7 +14,10 @@ export default function PainPanel({ pain }: { pain: PainInfo | null | undefined 
     <section className="card card-pad flex flex-col gap-4" aria-labelledby="pain-h">
       <div className="flex items-start gap-3">
         <div className="flex flex-col gap-1">
-          <h2 id="pain-h" className="t-head">Pain expression</h2>
+          <div className="flex items-center gap-2">
+            <h2 id="pain-h" className="t-head">Pain expression</h2>
+            <InfoTip term="pain" />
+          </div>
           <span className="t-micro text-mute">Face model, MobileNetV3</span>
         </div>
         <span className="ml-auto"><Experimental /></span>
@@ -34,10 +38,10 @@ export default function PainPanel({ pain }: { pain: PainInfo | null | undefined 
       ) : (
         <div className="flex flex-col gap-3">
           <div className="flex items-baseline gap-3">
-            <span className="t-num-m tnum">{Math.round(p! * 100)}<span className="t-head text-mute">%</span></span>
-            <span className="t-label text-ink2">
+            <Tip term="pain" className="t-num-m tnum">{Math.round(p! * 100)}<span className="t-head text-mute">%</span></Tip>
+            <Tip term="painThreshold" className="t-label text-ink2">
               {pain?.pain_detected ? 'above the model’s threshold' : 'below the model’s threshold'}
-            </span>
+            </Tip>
           </div>
           <div className="relative h-2 rounded-full bg-surface3" role="meter" aria-label="Pain-expression probability"
                aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(p! * 100)}>
@@ -45,9 +49,9 @@ export default function PainPanel({ pain }: { pain: PainInfo | null | undefined 
             <div className="absolute -top-1 -bottom-1 w-[2px] bg-ink" style={{ left: `${thr * 100}%` }} />
           </div>
           <div className="flex justify-between t-micro text-mute tnum">
-            <span>0%</span><span>threshold {Math.round(thr * 100)}%</span><span>100%</span>
+            <span>0%</span><Tip term="painThreshold">threshold {Math.round(thr * 100)}%</Tip><span>100%</span>
           </div>
-          <Quality sqi={pain?.sqi} label="Face" />
+          <Quality sqi={pain?.sqi} label="Face" term="sqiFace" />
         </div>
       )}
 

@@ -1,12 +1,15 @@
 // AppShell.tsx — side rail (desktop) / top bar (narrow), ward-wide alarm bar, page frame.
-import { Activity, House, LayoutGrid, Moon, Server, Sun, TestTubeDiagonal, Volume2, VolumeX } from 'lucide-react';
+// The research-prototype notice sits in the header, so it is on every page.
+import { Activity, House, LayoutGrid, Microscope, Moon, Server, Sun, TestTubeDiagonal, Volume2, VolumeX } from 'lucide-react';
 import { useEffect, useState, type ReactNode } from 'react';
 import { NavLink } from 'react-router-dom';
 import { useWard } from '../context/WardContext';
+import { clock } from '../lib/format';
 import { enableSound } from '../lib/sound';
 import { useTheme } from '../lib/theme';
 import AlarmBar from './AlarmBar';
 import Logo from './Logo';
+import { Tip } from './Tooltip';
 import { Chip } from './ui';
 
 function useClock() {
@@ -19,15 +22,46 @@ function useClock() {
 }
 
 const NAV = [
-  { to: '/', label: 'Home', icon: House, end: true },
-  { to: '/ward', label: 'Ward', icon: LayoutGrid, end: false },
-  { to: '/compare', label: 'Record & compare', short: 'Compare', icon: TestTubeDiagonal, end: false },
-  { to: '/system', label: 'System', icon: Server, end: false },
-];
+  { to: '/', label: 'Home', short: 'Home', icon: House, end: true, tip: 'navHome' },
+  { to: '/ward', label: 'Ward', short: 'Ward', icon: LayoutGrid, end: false, tip: 'navWard' },
+  { to: '/compare', label: 'Record & compare', short: 'Compare', icon: TestTubeDiagonal, end: false, tip: 'navCompare' },
+  { to: '/system', label: 'System', short: 'System', icon: Server, end: false, tip: 'navSystem' },
+] as const;
 
+
+/** "Live" only while updates are actually arriving; otherwise says how long it has been. */
+function LinkChip() {
+  const { link, lastMessageAt } = useWard();
+  const [, tick] = useState(0);
+  useEffect(() => {
+    const h = window.setInterval(() => tick((n) => n + 1), 1000);
+    return () => window.clearInterval(h);
+  }, []);
+  const age = lastMessageAt ? Math.max(0, Math.round((Date.now() - lastMessageAt) / 1000)) : null;
+  const fresh = link === 'live' && age !== null && age <= 3;
+  const text = fresh ? 'Live'
+    : link === 'connecting' ? 'Connecting'
+      : age !== null ? `No update for ${age < 60 ? `${age}s` : `${Math.floor(age / 60)} min`}` : 'Reconnecting';
+  return (
+    <Chip tone={fresh ? 'neutral' : 'amber'} term="live"
+          icon={fresh ? <span className="relative flex h-2 w-2"><span className="absolute inline-flex h-full w-full rounded-full bg-hr opacity-60 live-ping" /><span className="relative inline-flex h-2 w-2 rounded-full bg-hr" /></span>
+            : <Activity />}>
+{text}
+    </Chip>
+  );
+}
+
+function ThemeTip({ theme, side, children }: { theme: 'dark' | 'light'; side: 'right' | 'bottom'; children: ReactNode }) {
+  return (
+    <Tip title={theme === 'dark' ? 'Light theme' : 'Dark theme'} side={side} asChild
+         content={theme === 'dark' ? 'Switch to the light theme, for daylight.' : 'Switch to the dark theme, for a night ward.'}>
+      {children}
+    </Tip>
+  );
+}
 
 export default function AppShell({ children }: { children: ReactNode }) {
-  const { ward, link } = useWard();
+  const { ward } = useWard();
   const [soundOn, setSoundOn] = useState(false);
   const [theme, setTheme] = useTheme();
   const now = useClock();
@@ -51,24 +85,30 @@ export default function AppShell({ children }: { children: ReactNode }) {
       <aside className="hidden lg:flex sticky top-0 h-screen w-[88px] shrink-0 flex-col items-center gap-2 py-4 px-2 bg-surface rule-r border-r border-line">
         <NavLink to="/" aria-label="VisionICU home" className="mb-3 mt-1 rounded-md"><Logo height={44} label={null} /></NavLink>
         <nav aria-label="Main" className="flex flex-col gap-1 w-full">
-          {NAV.map(({ to, label, short, icon: Icon, end }) => (
-            <NavLink key={to} to={to} end={end} className={railLink} title={label}>
-              <Icon className="h-5 w-5" aria-hidden />
-              <span className="font-cond font-semibold text-[12.5px] leading-tight text-center">{short ?? label}</span>
-            </NavLink>
+          {NAV.map(({ to, label, short, icon: Icon, end, tip }) => (
+            <Tip key={to} term={tip} side="right" asChild>
+              <NavLink to={to} end={end} className={railLink} aria-label={label}>
+                <Icon className="h-5 w-5" aria-hidden />
+                <span className="font-cond font-semibold text-[12.5px] leading-tight text-center">{short}</span>
+              </NavLink>
+            </Tip>
           ))}
         </nav>
         <div className="mt-auto flex flex-col items-center gap-1 w-full">
-          <button type="button" className="btn btn-ghost w-full px-0" onClick={toggleSound} aria-pressed={soundOn}
-                  title={soundOn ? 'Alarm tones on' : 'Browsers block sound until you allow it'}>
-            {soundOn ? <Volume2 className="h-5 w-5" aria-hidden /> : <VolumeX className="h-5 w-5 text-amber" aria-hidden />}
-            <span className="sr-only">{soundOn ? 'Alarm sound on' : 'Turn on alarm sound'}</span>
-          </button>
-          <button type="button" className="btn btn-ghost w-full px-0"
-                  onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
-                  aria-label={theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}>
-            {theme === 'dark' ? <Sun className="h-5 w-5" aria-hidden /> : <Moon className="h-5 w-5" aria-hidden />}
-          </button>
+          <Tip term="sound" side="right" asChild
+               content={soundOn ? 'On in this browser. Select to turn alarm tones off.' : 'Off. Select to turn alarm tones on.'}>
+            <button type="button" className="btn btn-ghost w-full px-0" onClick={toggleSound} aria-pressed={soundOn}
+                    aria-label={soundOn ? 'Alarm sound on' : 'Turn on alarm sound'}>
+              {soundOn ? <Volume2 className="h-5 w-5" aria-hidden /> : <VolumeX className="h-5 w-5 text-amber" aria-hidden />}
+            </button>
+          </Tip>
+          <ThemeTip theme={theme} side="right">
+            <button type="button" className="btn btn-ghost w-full px-0"
+                    onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+                    aria-label={theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}>
+              {theme === 'dark' ? <Sun className="h-5 w-5" aria-hidden /> : <Moon className="h-5 w-5" aria-hidden />}
+            </button>
+          </ThemeTip>
         </div>
       </aside>
 
@@ -79,36 +119,47 @@ export default function AppShell({ children }: { children: ReactNode }) {
               <Logo height={26} label={null} className="lg:hidden" />
               <span className="font-cond font-semibold text-[20px] tracking-[-0.01em]">VisionICU</span>
             </NavLink>
+            <Chip term="prototype" icon={<Microscope />}>
+              <span>Research prototype<span className="hidden sm:inline">, not for clinical decisions</span></span>
+            </Chip>
             <nav aria-label="Main" className="lg:hidden grid grid-cols-4 gap-1 order-last w-full sm:flex sm:items-center sm:order-none sm:w-auto">
-              {NAV.map(({ to, label, short, icon: Icon, end }) => (
-                <NavLink key={to} to={to} end={end} className={topLink}>
-                  <Icon className="h-4 w-4" aria-hidden />{short ?? label}
-                </NavLink>
+              {NAV.map(({ to, short, icon: Icon, end, tip }) => (
+                <Tip key={to} term={tip} side="bottom" asChild>
+                  <NavLink to={to} end={end} className={topLink}>
+                    <Icon className="h-4 w-4" aria-hidden />{short}
+                  </NavLink>
+                </Tip>
               ))}
             </nav>
             <div className="ml-auto flex flex-wrap items-center gap-2">
-              {simulated && <Chip tone="sim" title="Started with --demo: no camera, simulated patients">Demo · simulated data</Chip>}
-              <Chip tone={link === 'live' ? 'neutral' : 'amber'}
-                    icon={<Activity className={link === 'live' ? 'text-hr' : ''} />}>
-                {link === 'live' ? 'Live' : link === 'connecting' ? 'Connecting' : 'Reconnecting'}
-              </Chip>
-              <button type="button" onClick={toggleSound} className="lg:hidden btn btn-ghost btn-sm" aria-pressed={soundOn}>
-                {soundOn ? <Volume2 className="h-4 w-4" aria-hidden /> : <VolumeX className="h-4 w-4 text-amber" aria-hidden />}
-                {soundOn ? 'Sound on' : 'Sound off'}
-              </button>
-              <button type="button" className="lg:hidden btn btn-ghost btn-sm"
-                      onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
-                      aria-label={theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}>
-                {theme === 'dark' ? <Sun className="h-4 w-4" aria-hidden /> : <Moon className="h-4 w-4" aria-hidden />}
-              </button>
-              {!soundOn && (
-                <button type="button" onClick={toggleSound} className="hidden lg:inline-flex btn btn-sm">
-                  <VolumeX className="h-4 w-4 text-amber" aria-hidden />Turn on alarm sound
+              {simulated && <Chip tone="sim" term="demo">Demo · simulated data</Chip>}
+              <LinkChip />
+              <Tip term="sound" side="bottom" asChild
+                   content={soundOn ? 'On in this browser. Select to turn alarm tones off.' : 'Off. Select to turn alarm tones on.'}>
+                <button type="button" onClick={toggleSound} className="lg:hidden btn btn-ghost btn-sm" aria-pressed={soundOn}>
+                  {soundOn ? <Volume2 className="h-4 w-4" aria-hidden /> : <VolumeX className="h-4 w-4 text-amber" aria-hidden />}
+                  {soundOn ? 'Sound on' : 'Sound off'}
                 </button>
+              </Tip>
+              <ThemeTip theme={theme} side="bottom">
+                <button type="button" className="lg:hidden btn btn-ghost btn-sm"
+                        onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+                        aria-label={theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}>
+                  {theme === 'dark' ? <Sun className="h-4 w-4" aria-hidden /> : <Moon className="h-4 w-4" aria-hidden />}
+                </button>
+              </ThemeTip>
+              {!soundOn && (
+                <Tip term="sound" side="bottom" asChild>
+                  <button type="button" onClick={toggleSound} className="hidden lg:inline-flex btn btn-sm">
+                    <VolumeX className="h-4 w-4 text-amber" aria-hidden />Turn on alarm sound
+                  </button>
+                </Tip>
               )}
-              <time className="font-cond font-semibold text-[20px] tnum pl-2" dateTime={now.toISOString()}>
-                {now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-              </time>
+              <Tip term="clock" side="bottom" className="ml-2">
+                <time className="font-cond font-semibold text-[20px] tnum" dateTime={now.toISOString()}>
+                  {clock(now.getTime() / 1000)}
+                </time>
+              </Tip>
             </div>
           </div>
         </header>

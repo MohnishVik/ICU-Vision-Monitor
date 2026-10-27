@@ -4,10 +4,23 @@
 // reference you trust (metronome rate, counted breaths, pulse oximeter). Nothing visual is
 // stored. Score sessions on the Compare page or with scripts/compare_sessions.py.
 import { Circle, Plus, Square } from 'lucide-react';
-import { useCallback, useEffect, useState, type FormEvent } from 'react';
+import { cloneElement, useCallback, useEffect, useId, useState, type FormEvent, type ReactElement } from 'react';
 import { api } from '../lib/api';
 import { duration } from '../lib/format';
+import type { GlossKey } from '../lib/glossary';
 import type { SessionStatus } from '../types';
+import { Tip } from './Tooltip';
+
+/** A labelled field whose label explains itself on hover; the control carries the same text
+ *  as its description, so keyboard and screen-reader users get it on focus. */
+function Field({ term, label, children }: { term: GlossKey; label: string; children: ReactElement }) {
+  const id = `field-${useId().replace(/:/g, '')}`;
+  return (
+    <Tip term={term} id={id} asChild>
+      <label className="field"><span>{label}</span>{cloneElement(children, { 'aria-describedby': id })}</label>
+    </Tip>
+  );
+}
 
 export const CONDITIONS = [
   'Rest, normal breathing', 'Paced breathing (metronome)', 'Dim light', 'Talking or moving',
@@ -82,31 +95,38 @@ export default function SessionControl({ patientId, onStopped, compact = false }
     return (
       <div className="flex flex-col gap-4">
         <div className="flex flex-wrap items-center gap-3">
-          <span className="chip band-red"><span className="h-2 w-2 rounded-full bg-red rec-dot" aria-hidden />Recording</span>
+          <Tip term="recording" className="chip band-red"><span className="h-2 w-2 rounded-full bg-red rec-dot" aria-hidden />Recording</Tip>
           <span className="t-head truncate">{status.label}</span>
-          <span className="t-label text-mute tnum">{duration(status.elapsed_s)} · {status.rows ?? 0} s logged</span>
-          <button type="button" className="btn btn-sm ml-auto" disabled={busy} onClick={stop}>
-            <Square className="h-4 w-4" aria-hidden />Stop
-          </button>
+          <Tip title="Elapsed and logged" className="t-label text-mute tnum"
+               content="Time since the recording started, and how many one-second rows have been written so far.">
+            {duration(status.elapsed_s)} · {status.rows ?? 0} s logged
+          </Tip>
+          <Tip title="Stop recording" content="Ends the session and saves it; it then appears on the Record & compare page for scoring." asChild>
+            <button type="button" className="btn btn-sm ml-auto" disabled={busy} onClick={stop}>
+              <Square className="h-4 w-4" aria-hidden />Stop
+            </button>
+          </Tip>
         </div>
         <dl className="grid grid-cols-2 gap-3">
-          <div className="well px-3 py-2"><dt className="t-micro text-mute">Reference RR</dt>
+          <div className="well px-3 py-2"><dt className="t-micro text-mute"><Tip term="refRR" className="tip-term">Reference RR</Tip></dt>
             <dd className="font-cond font-semibold text-[24px] tnum">{ref.rr ?? '–'} <span className="t-micro text-mute">br/min</span></dd></div>
-          <div className="well px-3 py-2"><dt className="t-micro text-mute">Reference HR</dt>
+          <div className="well px-3 py-2"><dt className="t-micro text-mute"><Tip term="refHR" className="tip-term">Reference HR</Tip></dt>
             <dd className="font-cond font-semibold text-[24px] tnum">{ref.hr ?? '–'} <span className="t-micro text-mute">bpm</span></dd></div>
         </dl>
         <form onSubmit={addRef} className="flex flex-col gap-3" aria-label="Update the reference">
           <p className="t-label text-ink2">Changed pace, or took a new oximeter reading? Log it as it happens:</p>
           <div className="grid grid-cols-2 gap-3">
-            <label className="field"><span>Breathing rate (br/min)</span>
-              <input className="input tnum" inputMode="decimal" value={refRr} onChange={(e) => setRefRr(e.target.value)} /></label>
-            <label className="field"><span>Heart rate (bpm)</span>
-              <input className="input tnum" inputMode="decimal" value={refHr} onChange={(e) => setRefHr(e.target.value)} /></label>
+            <Field term="refRR" label="Breathing rate (br/min)">
+              <input className="input tnum" inputMode="decimal" value={refRr} onChange={(e) => setRefRr(e.target.value)} /></Field>
+            <Field term="refHR" label="Heart rate (bpm)">
+              <input className="input tnum" inputMode="decimal" value={refHr} onChange={(e) => setRefHr(e.target.value)} /></Field>
           </div>
-          {!compact && <label className="field"><span>Note (optional)</span>
+          {!compact && <Field term="sessNotes" label="Note (optional)">
             <input className="input" value={refNote} maxLength={200} onChange={(e) => setRefNote(e.target.value)}
-                   placeholder="e.g. metronome to 20" /></label>}
-          <button type="submit" className="btn w-fit" disabled={busy}><Plus className="h-4 w-4" aria-hidden />Log reference</button>
+                   placeholder="e.g. metronome to 20" /></Field>}
+          <Tip term="logReference" asChild>
+            <button type="submit" className="btn w-fit" disabled={busy}><Plus className="h-4 w-4" aria-hidden />Log reference</button>
+          </Tip>
         </form>
         {status.error && <p className="t-label text-red" role="alert">Recording stopped: {status.error}</p>}
         {err && <p className="t-label text-red" role="alert">{err}</p>}
@@ -117,27 +137,29 @@ export default function SessionControl({ patientId, onStopped, compact = false }
   return (
     <form onSubmit={start} className="flex flex-col gap-3" aria-label="Start a comparison recording">
       <div className="grid gap-3 sm:grid-cols-2">
-        <label className="field"><span>Condition</span>
+        <Field term="condition" label="Condition">
           <select className="input" value={condition} onChange={(e) => setCondition(e.target.value)}>
             {CONDITIONS.map((c) => <option key={c}>{c}</option>)}
-          </select></label>
-        <label className="field"><span>Label</span>
+          </select></Field>
+        <Field term="sessLabel" label="Label">
           <input className="input" value={label} maxLength={80} onChange={(e) => setLabel(e.target.value)}
-                 placeholder="e.g. Sub01 paced 12" /></label>
-        <label className="field"><span>Reference breathing rate (br/min)</span>
+                 placeholder="e.g. Sub01 paced 12" /></Field>
+        <Field term="refRR" label="Reference breathing rate (br/min)">
           <input className="input tnum" inputMode="decimal" value={rr} onChange={(e) => setRr(e.target.value)}
-                 placeholder="metronome or counted" /></label>
-        <label className="field"><span>Reference heart rate (bpm)</span>
+                 placeholder="metronome or counted" /></Field>
+        <Field term="refHR" label="Reference heart rate (bpm)">
           <input className="input tnum" inputMode="decimal" value={hr} onChange={(e) => setHr(e.target.value)}
-                 placeholder="pulse oximeter" /></label>
+                 placeholder="pulse oximeter" /></Field>
       </div>
-      {!compact && <label className="field"><span>Notes (optional)</span>
+      {!compact && <Field term="sessNotes" label="Notes (optional)">
         <textarea className="input" value={notes} maxLength={500} onChange={(e) => setNotes(e.target.value)}
-                  placeholder="lighting, distance, clothing… no names" /></label>}
+                  placeholder="lighting, distance, clothing… no names" /></Field>}
       <div className="flex flex-wrap items-center gap-3">
-        <button type="submit" className="btn btn-primary" disabled={busy}>
-          <Circle className="h-4 w-4 fill-current text-red" aria-hidden />Start recording
-        </button>
+        <Tip term="recording" asChild>
+          <button type="submit" className="btn btn-primary" disabled={busy}>
+            <Circle className="h-4 w-4 fill-current text-red" aria-hidden />Start recording
+          </button>
+        </Tip>
         <span className="t-micro text-mute">Numbers only: no video or images are saved.</span>
       </div>
       {err && <p className="t-label text-red" role="alert">{err}</p>}

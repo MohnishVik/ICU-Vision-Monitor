@@ -3,15 +3,36 @@
 // MAE is never shown without coverage: a source that answers 20 % of the time with a small
 // error is not better than one that answers 95 % of the time with a slightly larger one.
 import { Award, ClipboardList, FlaskConical, RefreshCw, Terminal } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useId, useMemo, useState, type ReactNode } from 'react';
 import SessionControl from '../components/SessionControl';
+import { Tip } from '../components/Tooltip';
 import { Bar, Chip, SectionHead } from '../components/ui';
 import { useWard } from '../context/WardContext';
 import { api } from '../lib/api';
-import { duration, fmt1, SOURCES } from '../lib/format';
+import { dateTime, duration, fmt1, SOURCES } from '../lib/format';
+import type { GlossKey } from '../lib/glossary';
 import type { SessionMeta, SessionReport, SourceScore, VitalKey } from '../types';
 
 const pctTxt = (x: number | null) => (x === null ? '–' : `${Math.round(x * 100)}%`);
+
+/** Column header with its definition behind it. */
+const Th = ({ term, children, className = '' }: { term: GlossKey; children: ReactNode; className?: string }) => (
+  <th className={className}><Tip term={term} className="tip-term">{children}</Tip></th>
+);
+
+/** A number field whose label explains itself; the input points at the same note. */
+function SecondsField({ term, label, value, onChange }: {
+  term: GlossKey; label: string; value: number; onChange: (v: number) => void;
+}) {
+  const id = `sec-${useId().replace(/:/g, '')}`;
+  return (
+    <Tip term={term} id={id} asChild>
+      <label className="inline-flex items-center gap-2 t-label text-ink2 whitespace-nowrap">{label}
+        <input className="input w-[72px] tnum" type="number" min={0} max={600} value={value} aria-describedby={id}
+               onChange={(e) => onChange(Math.max(0, Number(e.target.value) || 0))} />s</label>
+    </Tip>
+  );
+}
 
 function ScoreTable({ vital, scores }: { vital: VitalKey; scores: Record<string, SourceScore> }) {
   const names = Object.keys(scores).sort((a, b) => (a.endsWith('.fused') ? -1 : b.endsWith('.fused') ? 1 : a.localeCompare(b)));
@@ -31,12 +52,12 @@ function ScoreTable({ vital, scores }: { vital: VitalKey; scores: Record<string,
         <caption className="sr-only">{vital.toUpperCase()} estimators against the reference</caption>
         <thead>
           <tr>
-            <th>{vital === 'rr' ? 'Respiratory rate' : 'Heart rate'} · source</th>
-            <th className="w-[150px]">Coverage</th>
-            <th className="w-[170px]">MAE ({unit})</th>
-            <th className="num">Bias</th><th className="num">RMSE</th>
-            <th className="num">Within ±{scores[names[0]].tolerance}</th><th className="num">r</th>
-            <th className="num" title="Network output before range / quality gates">MAE unfiltered</th>
+            <Th term="estimators">{vital === 'rr' ? 'Respiratory rate' : 'Heart rate'} · source</Th>
+            <Th term="coverage" className="w-[150px]">Coverage</Th>
+            <Th term="mae" className="w-[170px]">MAE ({unit})</Th>
+            <Th term="bias" className="num">Bias ({unit})</Th><Th term="rmse" className="num">RMSE ({unit})</Th>
+            <Th term="withinTol" className="num">Within ±{scores[names[0]].tolerance} {unit}</Th><Th term="pearson" className="num">r</Th>
+            <Th term="maeUnfiltered" className="num">MAE unfiltered</Th>
           </tr>
         </thead>
         <tbody>
@@ -50,9 +71,13 @@ function ScoreTable({ vital, scores }: { vital: VitalKey; scores: Record<string,
                     <svg width="22" height="8" aria-hidden><line x1="1" y1="4" x2="21" y2="4" stroke={info?.color ?? 'var(--ink-2)'}
                          strokeWidth="2.5" strokeDasharray={info?.dash} strokeLinecap="round" /></svg>
                     <span className="t-label t-strong">{info?.name ?? n}</span>
-                    {n.endsWith('.fused') && <span className="t-micro text-mute">(what the screen showed)</span>}
-                    {info?.learned && <FlaskConical className="h-3.5 w-3.5 text-mute" aria-label="experimental" />}
-                    {n === best && <Chip tone="ok" icon={<Award />}>Lowest MAE</Chip>}
+                    {n.endsWith('.fused') && <Tip term="screenShowed" className="t-micro text-mute">(what the screen showed)</Tip>}
+                    {info?.learned && (
+                      <Tip term="learned" className="inline-flex text-mute">
+                        <FlaskConical className="h-3.5 w-3.5" aria-label="experimental" />
+                      </Tip>
+                    )}
+                    {n === best && <Chip tone="ok" icon={<Award />} term="lowestMae">Lowest MAE</Chip>}
                   </span>
                 </td>
                 <td>
@@ -124,12 +149,14 @@ export default function Compare() {
       <div className="grid gap-5 xl:grid-cols-12">
         <div className="xl:col-span-5 flex flex-col gap-5 min-w-0">
           <section className="card card-pad flex flex-col gap-4" aria-labelledby="rec-h">
-            <SectionHead id="rec-h" title="Record">
-              <label className="inline-flex items-center"><span className="sr-only">Bed</span>
-                <select className="input w-auto" value={bed} onChange={(e) => setBed(e.target.value)} aria-label="Bed to record">
-                  {(ward ?? []).map((p) => <option key={p.patient_id} value={p.patient_id}>{p.label}{p.simulated ? ' (simulated)' : ''}</option>)}
-                </select>
-              </label>
+            <SectionHead id="rec-h" title="Record" info="recording">
+              <Tip title="Bed to record" content="Which bed’s estimators are logged in this session." asChild>
+                <label className="inline-flex items-center"><span className="sr-only">Bed</span>
+                  <select className="input w-auto" value={bed} onChange={(e) => setBed(e.target.value)} aria-label="Bed to record">
+                    {(ward ?? []).map((p) => <option key={p.patient_id} value={p.patient_id}>{p.label}{p.simulated ? ' (simulated)' : ''}</option>)}
+                  </select>
+                </label>
+              </Tip>
             </SectionHead>
             {bed && <SessionControl key={bed} patientId={bed} onStopped={(sid) => { loadSessions(); setSel(sid); }} />}
           </section>
@@ -155,9 +182,9 @@ export default function Compare() {
                       {sessions.map((s) => (
                         <tr key={s.id} className={s.id === sel ? 'bg-surface2' : ''}>
                           <td className="tnum t-label whitespace-nowrap">
-                            <button type="button" className="text-left underline-offset-4 hover:underline min-h-[32px]" onClick={() => setSel(s.id)}
+                            <button type="button" className="hit text-left underline-offset-4 hover:underline min-h-[32px]" onClick={() => setSel(s.id)}
                                     aria-pressed={s.id === sel}>
-                              {new Date(s.started * 1000).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                              {dateTime(s.started)}
                             </button>
                           </td>
                           <td className="t-label">{s.patient_id}</td>
@@ -180,13 +207,9 @@ export default function Compare() {
       </div>
 
       <section className="card card-pad flex flex-col gap-4" aria-labelledby="rep-h" aria-busy={!!sel && !report}>
-            <SectionHead id="rep-h" title={selMeta ? `Results · ${selMeta.label}` : 'Results'}>
-              <label className="inline-flex items-center gap-2 t-label text-ink2 whitespace-nowrap" title="Seconds skipped at the start (windows filling)">Skip first
-                <input className="input w-[72px] tnum" type="number" min={0} max={600} value={warmup}
-                       onChange={(e) => setWarmup(Math.max(0, Number(e.target.value) || 0))} />s</label>
-              <label className="inline-flex items-center gap-2 t-label text-ink2 whitespace-nowrap" title="Seconds skipped after each reference change">Settle
-                <input className="input w-[72px] tnum" type="number" min={0} max={600} value={settle}
-                       onChange={(e) => setSettle(Math.max(0, Number(e.target.value) || 0))} />s</label>
+            <SectionHead id="rep-h" title={selMeta ? `Results · ${selMeta.label}` : 'Results'} info="results">
+              <SecondsField term="warmup" label="Skip first" value={warmup} onChange={setWarmup} />
+              <SecondsField term="settle" label="Settle" value={settle} onChange={setSettle} />
             </SectionHead>
             {selMeta?.simulated && <p className="t-micro text-mute">Simulated session: the numbers show how the page works, not how the models perform.</p>}
             {selMeta && !selMeta.fuse_learned && <p className="t-micro text-mute">Learned models were shown only (not fused) during this session.</p>}

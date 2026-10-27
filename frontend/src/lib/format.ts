@@ -17,8 +17,21 @@ export function ago(ts: number | null | undefined, now = Date.now() / 1000): str
   return `${Math.round(m / 60)} h ago`;
 }
 
+// Times are always 24-hour (HH:MM), with seconds where an event is logged (HH:MM:SS).
+const H23 = { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' } as const;
+
 export function clock(ts: number): string {
-  return new Date(ts * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  return new Date(ts * 1000).toLocaleTimeString([], H23);
+}
+
+export function clockSec(ts: number | null | undefined): string {
+  if (!ts) return '--:--:--';
+  return new Date(ts * 1000).toLocaleTimeString([], { ...H23, second: '2-digit' });
+}
+
+/** Date and 24-hour time, for session lists. */
+export function dateTime(ts: number): string {
+  return new Date(ts * 1000).toLocaleString([], { month: 'short', day: 'numeric', ...H23 });
 }
 
 export function duration(s: number | null | undefined): string {
@@ -57,9 +70,19 @@ export function vitalUnavailableText(v: Pick<Vital, 'reason' | 'stale' | 'value'
     case 'warming_up': return 'Collecting signal';
     case 'paths_disagree': return 'Sensors disagree';
     case 'no_valid_input': return 'Signal too weak';
+    case 'motion': return 'Patient moving';
+    case 'low_light': return 'Face too dark';
     default: return v.stale ? 'No recent reading' : 'Waiting for data';
   }
 }
+
+/** Alarm escalation stages (config/ews_rules.yaml alarm.escalation_stages), in words. */
+export const STAGE_TEXT: Record<string, string> = {
+  log_only: 'logged only',
+  dashboard_highlight: 'highlighted',
+  chime: 'chime',
+  phone_push: 'phone push',
+};
 
 export const MODULE_TEXT: Record<string, string> = {
   pose: 'Pose tracking',

@@ -31,6 +31,44 @@ def test_fuse_agreement_gate_refuses_to_average_disagreeing_paths():
     assert out.value is None and out.meta["reason"] == "paths_disagree"
 
 
+def test_fuse_drops_disagreeing_secondary_instead_of_blanking():
+    cfg = FusionConfig(agreement_gate_bpm=10.0, secondary=frozenset({"hr.efficientphys"}))
+    out = fuse([m(72.0, 0.9, "hr.pos"), m(100.0, 0.9, "hr.efficientphys")], "hr.fused", cfg)
+    assert out.value == 72.0
+    assert out.meta["rejected"]["hr.efficientphys"] == "disagrees_with_primary"
+
+
+def test_fuse_blends_agreeing_secondary():
+    cfg = FusionConfig(agreement_gate_bpm=4.0, secondary=frozenset({"rr.cnn_lbrd"}))
+    out = fuse([m(14.0, 0.9, "rr.depth"), m(16.0, 0.9, "rr.cnn_lbrd")], "rr.fused", cfg)
+    assert out.value is not None and 14.0 < out.value < 16.0
+    assert set(out.meta["inputs"]) == {"rr.depth", "rr.cnn_lbrd"}
+
+
+def test_fuse_secondary_alone_when_no_primary():
+    cfg = FusionConfig(agreement_gate_bpm=4.0, secondary=frozenset({"rr.cnn_lbrd"}))
+    out = fuse([m(None, 0.9, "rr.depth"), m(15.0, 0.8, "rr.cnn_lbrd")], "rr.fused", cfg)
+    assert out.value == 15.0
+
+
+def test_fuse_passes_through_the_actionable_reason():
+    moving = Measurement(None, 0.0, 100.0, "rr.depth", 0.0, {"reason": "motion"})
+    weak = Measurement(None, 0.0, 100.0, "rr.thermal", 0.0, {})
+    assert fuse([moving, weak], "rr.fused").meta["reason"] == "motion"
+    dark = Measurement(None, 0.0, 100.0, "hr.pos", 0.0, {"reason": "low_light"})
+    assert fuse([dark], "hr.fused").meta["reason"] == "low_light"
+    assert fuse([weak], "rr.fused").meta["reason"] == "no_valid_input"
+
+
+def test_learned_fuse_source_selection():
+    from src.serving.state import learned_fuse_sources
+    known = ("rr.cnn_lbrd", "rr.cnn_d435", "hr.efficientphys")
+    assert learned_fuse_sources({"learned": {"fuse": True}}, known) == known
+    assert learned_fuse_sources({"learned": {"fuse": False}}, known) == ()
+    assert learned_fuse_sources({"learned": {"fuse": ["rr.cnn_lbrd", "hr.efficientphys"]}}, known) \
+        == ("rr.cnn_lbrd", "hr.efficientphys")
+
+
 def test_staleness_watchdog():
     w = StalenessWatchdog(timeout_s=5.0)
     assert w.is_stale("rr.fused", 0.0)                       # never seen -> stale

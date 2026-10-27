@@ -10,6 +10,7 @@ import { ArrowLeft, Camera, Check, Trash2, Undo2, X } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState, type PointerEvent } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import ThermalCanvas, { robustRange, ThermalLegend, type ThermalMarker } from '../components/ThermalCanvas';
+import { InfoTip, Tip } from '../components/Tooltip';
 import { api, urls } from '../lib/api';
 import type { PointPair, ThermalRegistrationStatus, ThermalSnapshot } from '../types';
 
@@ -118,10 +119,21 @@ export default function ThermalAlign() {
   return (
     <div className="flex flex-col gap-5">
       <header className="flex flex-wrap items-center gap-3">
-        <Link to={`/patients/${encodeURIComponent(id)}`} className="btn btn-ghost px-2" aria-label="Back to bed">
-          <ArrowLeft className="h-4 w-4" aria-hidden />
-        </Link>
-        <h1 className="font-cond font-semibold text-[40px] leading-none tracking-[-0.015em]">Align the thermal camera</h1>
+        <Tip title="Back to the bed" content="Leave without changing the current alignment." asChild side="bottom">
+          <Link to={`/patients/${encodeURIComponent(id)}`} className="btn btn-ghost px-2" aria-label="Back to bed">
+            <ArrowLeft className="h-4 w-4" aria-hidden />
+          </Link>
+        </Tip>
+        <div className="flex items-center gap-3 min-w-0">
+          <h1 className="font-cond font-semibold text-[40px] leading-none tracking-[-0.015em]">Align the thermal camera</h1>
+          <InfoTip term="thermalAlign" />
+        </div>
+        <p className="basis-full t-label text-mute">
+          <span className="block max-w-[80ch]">
+            Mark the same warm spots in the thermal and colour images so breathing is read from the air at the
+            nostrils rather than the warmest spot.
+          </span>
+        </p>
       </header>
 
       <div className="grid gap-5 lg:grid-cols-12">
@@ -150,7 +162,7 @@ export default function ThermalAlign() {
               <figure className="m-0 flex flex-col gap-2">
                 <ThermalCanvas grid={snap.thermal} range={range} markers={markers('thermal')} onPick={onThermal}
                                pixelated label="Thermal image: click the warm mug" />
-                <ThermalLegend lo={range[0]} hi={range[1]} />
+                <Tip term="thermalScale" className="block"><ThermalLegend lo={range[0]} hi={range[1]} /></Tip>
                 <figcaption className="t-micro text-mute">Thermal camera (hover to read °C; the mug is the hot spot)</figcaption>
               </figure>
             </div>
@@ -159,9 +171,11 @@ export default function ThermalAlign() {
               <div className="flex flex-col items-center gap-3 max-w-[46ch]">
                 <Camera className="h-8 w-8 text-mute" aria-hidden />
                 <p className="t-body text-ink2">Hold the mug in view, then take a snapshot of both cameras at the same moment.</p>
-                <button type="button" className="btn btn-primary" onClick={() => void take()} disabled={busy}>
-                  <Camera className="h-4 w-4" aria-hidden />Take snapshot
-                </button>
+                <Tip title="Take snapshot" content="Freezes one colour and one thermal frame at the same moment, so you can mark matching spots." asChild>
+                  <button type="button" className="btn btn-primary" onClick={() => void take()} disabled={busy}>
+                    <Camera className="h-4 w-4" aria-hidden />Take snapshot
+                  </button>
+                </Tip>
               </div>
             </div>
           )}
@@ -175,7 +189,9 @@ export default function ThermalAlign() {
               </p>
               <img src={`${urls.thermalOverlay(id)}?n=${checkNonce}`} alt="Colour image with the aligned thermal image overlaid"
                    className="w-full rounded-lg bg-black" />
-              <button type="button" className="btn w-fit" onClick={() => setCheckNonce((n) => n + 1)}>Refresh check</button>
+              <Tip title="Refresh check" content="Draws the overlay again from the cameras’ current frames." asChild>
+                <button type="button" className="btn w-fit" onClick={() => setCheckNonce((n) => n + 1)}>Refresh check</button>
+              </Tip>
             </section>
           )}
         </div>
@@ -187,7 +203,7 @@ export default function ThermalAlign() {
               <li>Fill a mug with hot water and hold it at about the patient's distance from the camera.</li>
               <li>Take a snapshot. Click the mug in the colour image, then in the thermal image.</li>
               <li>Move the mug to another part of the view, take a new snapshot, and repeat.</li>
-              <li>Mark at least 4 spots spread across the view. With 6 or more, the system can measure its own accuracy.</li>
+              <li>Mark at least 4 spots spread across the view. With 5 or more, the system can measure its own accuracy.</li>
             </ol>
             <p className="t-micro text-mute">
               Faces are blurred in the colour image, so a warm object works better than facial features.
@@ -198,9 +214,10 @@ export default function ThermalAlign() {
           <section className="card card-pad flex flex-col gap-3" aria-labelledby="pairs-h">
             <div className="flex items-baseline gap-2">
               <h2 id="pairs-h" className="t-head">Marked points</h2>
-              <span className="t-micro text-mute tnum ml-auto">
+              <Tip term="alignQuality" title="Point pairs" className="t-micro text-mute tnum ml-auto"
+                   content="At least 4 pairs are needed to save; spread them across the view.">
                 {pairs.length < 4 ? `${pairs.length} of 4 needed` : `${pairs.length} marked`}
-              </span>
+              </Tip>
             </div>
             {pairs.length === 0 ? (
               <p className="t-label text-mute">None yet.</p>
@@ -212,27 +229,37 @@ export default function ThermalAlign() {
                     <span className="text-ink2 flex-1">
                       colour {Math.round(p.rgb[0])}, {Math.round(p.rgb[1])} &nbsp;thermal {p.thermal[0].toFixed(1)}, {p.thermal[1].toFixed(1)}
                     </span>
-                    <button type="button" className="btn btn-ghost h-7 px-1.5" aria-label={`Remove point ${i + 1}`}
-                            onClick={() => setPairs((s) => s.filter((_, j) => j !== i))}>
-                      <X className="h-3.5 w-3.5" aria-hidden />
-                    </button>
+                    <Tip title={`Remove point ${i + 1}`} content="Delete this pair from both images." asChild side="bottom">
+                      <button type="button" className="btn btn-ghost h-7 px-1.5" aria-label={`Remove point ${i + 1}`}
+                              onClick={() => setPairs((s) => s.filter((_, j) => j !== i))}>
+                        <X className="h-3.5 w-3.5" aria-hidden />
+                      </button>
+                    </Tip>
                   </li>
                 ))}
               </ul>
             )}
             <div className="flex flex-wrap gap-2">
-              <button type="button" className="btn" onClick={() => void take()} disabled={busy}>
-                <Camera className="h-4 w-4" aria-hidden />{snap ? 'New snapshot' : 'Take snapshot'}
-              </button>
-              <button type="button" className="btn" disabled={!pairs.length && !pending.rgb && !pending.thermal}
-                      onClick={() => (pending.rgb || pending.thermal ? setPending({}) : setPairs((s) => s.slice(0, -1)))}>
-                <Undo2 className="h-4 w-4" aria-hidden />Undo
-              </button>
+              <Tip title={snap ? 'New snapshot' : 'Take snapshot'} asChild
+                   content="Freezes one colour and one thermal frame at the same moment. Move the mug between snapshots; marked points are kept.">
+                <button type="button" className="btn" onClick={() => void take()} disabled={busy}>
+                  <Camera className="h-4 w-4" aria-hidden />{snap ? 'New snapshot' : 'Take snapshot'}
+                </button>
+              </Tip>
+              <Tip title="Undo" content="Remove the half-marked point, or the last complete pair." asChild>
+                <button type="button" className="btn" disabled={!pairs.length && !pending.rgb && !pending.thermal}
+                        onClick={() => (pending.rgb || pending.thermal ? setPending({}) : setPairs((s) => s.slice(0, -1)))}>
+                  <Undo2 className="h-4 w-4" aria-hidden />Undo
+                </button>
+              </Tip>
             </div>
-            <button type="button" className="btn btn-primary h-11 justify-center" disabled={pairs.length < 4 || busy}
-                    onClick={() => void save()}>
-              <Check className="h-4 w-4" aria-hidden />{busy ? 'Saving' : 'Save alignment'}
-            </button>
+            <Tip title="Save alignment" asChild
+                 content="Sends the pairs to the server, which fits the mapping and checks it. Needs at least 4 pairs.">
+              <button type="button" className="btn btn-primary h-11 justify-center" disabled={pairs.length < 4 || busy}
+                      onClick={() => void save()}>
+                <Check className="h-4 w-4" aria-hidden />{busy ? 'Saving' : 'Save alignment'}
+              </button>
+            </Tip>
             {error && <p className="t-label text-red" role="alert">{error}</p>}
           </section>
 
@@ -240,15 +267,18 @@ export default function ThermalAlign() {
             <h2 id="cur-h" className="t-head">Current alignment</h2>
             {status?.registered ? (
               <>
-                <p className="t-label text-ink">{QUALITY_TEXT[status.quality ?? 'unchecked']}</p>
+                <p className="t-label text-ink"><Tip term="alignQuality">{QUALITY_TEXT[status.quality ?? 'unchecked']}</Tip></p>
                 <p className="t-micro text-mute tnum">
                   {status.n_pairs > 0 ? `${status.n_pairs} points` : 'Fixed matrix'}
                   {status.error_px != null && status.n_pairs > 4 ? `, average error ${status.error_px.toFixed(1)} px` : ''}
                   {status.source === 'camera.yaml' ? ', from camera.yaml' : status.source === 'demo' ? ', simulated' : ''}
                 </p>
-                <button type="button" className="btn btn-ghost w-fit px-2" onClick={() => void remove()} disabled={busy}>
-                  <Trash2 className="h-4 w-4" aria-hidden />Remove alignment
-                </button>
+                <Tip title="Remove alignment" asChild
+                     content="Forget the points marked here. A fixed matrix in camera.yaml, if there is one, applies again; otherwise breathing is read from the warmest spot until you align again.">
+                  <button type="button" className="btn btn-ghost w-fit px-2" onClick={() => void remove()} disabled={busy}>
+                    <Trash2 className="h-4 w-4" aria-hidden />Remove alignment
+                  </button>
+                </Tip>
               </>
             ) : (
               <p className="t-label text-ink2">Not aligned. Breathing is read from the warmest spot.</p>

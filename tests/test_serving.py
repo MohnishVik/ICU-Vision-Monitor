@@ -49,7 +49,9 @@ def test_vitals_snapshot_contract(demo_client):
     assert set(s["vitals"]) == {"rr", "hr"}
     assert s["pain"]["available"] is True and s["pain"]["experimental"] is True
     assert {"rr.depth", "rr.cnn_lbrd", "rr.cnn_d435"} <= set(s["vitals"]["rr"]["sources"])
-    assert s["vitals"]["rr"]["sources"]["rr.cnn_lbrd"]["role"] == "display"
+    # signal.yaml fuses the LBRD-IC CNN and EfficientPhys; the D435 CNN stays display-only
+    assert s["vitals"]["rr"]["sources"]["rr.cnn_lbrd"]["role"] == "fused"
+    assert s["vitals"]["rr"]["sources"]["rr.cnn_d435"]["role"] == "display"
     assert len(s["scene"]["keypoints"]) == 17 and len(s["scene"]["chair"]) == 4
 
 
@@ -159,6 +161,15 @@ def test_spa_fallback_when_not_built(demo_client):
     assert r.status_code == 200 and "npm run build" in r.text
 
 
+def _realsense_attached() -> bool:
+    try:
+        import pyrealsense2 as rs
+        return len(rs.context().query_devices()) > 0
+    except Exception:  # noqa: BLE001 - no driver means no camera
+        return False
+
+
+@pytest.mark.skipif(_realsense_attached(), reason="a RealSense camera is plugged in, so camera mode opens it")
 def test_camera_mode_without_hardware_degrades_cleanly(tmp_path):
     """No pyrealsense2 / no camera / no weights: server stays up and reports why."""
     manager = EngineManager.from_args(demo=False, patient_id="bed-1", label="Bed 1")

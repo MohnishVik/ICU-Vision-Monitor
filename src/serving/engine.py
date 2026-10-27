@@ -468,7 +468,8 @@ class CameraEngine(PatientSource):
 
     def _load_learned(self, signal_yaml: str) -> None:
         """The learned RR/HR networks load one by one; a missing file disables only its path."""
-        fused = "joins the fused value" if self.pipeline.learned_fused else "shown + logged, not fused"
+        fl = self.pipeline.fused_learned
+        fused = lambda src: "joins the fused value" if src in fl else "shown + logged, not fused"  # noqa: E731
         try:
             mods, errors = importlib.import_module("src.modules.learned").load_learned_modules(signal_yaml)
         except Exception as exc:  # noqa: BLE001 - torch missing etc.
@@ -477,15 +478,15 @@ class CameraEngine(PatientSource):
             return
         self._mods.update(mods)
         if "rr_learned" in mods:
-            srcs = ", ".join(mods["rr_learned"].sources)
+            srcs = ", ".join(f"{s} ({fused(s)})" for s in mods["rr_learned"].sources)
             missing = "; ".join(v for k, v in errors.items() if k.startswith("rr_"))
             self._set_mod("rr_learned", "degraded" if missing else "ok",
-                          f"{srcs} ({fused})" + (f". {missing}" if missing else ""))
+                          srcs + (f". {missing}" if missing else ""))
         else:
             self._set_mod("rr_learned", "unavailable",
                           "; ".join(v for k, v in errors.items() if k.startswith("rr_")))
         if "hr_learned" in mods:
-            note = f"hr.efficientphys ({fused})"
+            note = f"hr.efficientphys ({fused('hr.efficientphys')})"
             if self._pose is None:
                 self._set_mod("hr_learned", "degraded", note + ". Needs pose tracking to find the face.")
             else:

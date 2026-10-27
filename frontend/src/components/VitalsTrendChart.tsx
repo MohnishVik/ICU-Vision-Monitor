@@ -7,8 +7,9 @@
 import { LineChart as LineIcon, Table2 } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { CartesianGrid, Line, LineChart, ReferenceArea, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
-import { clock, fmtRate, SOURCES } from '../lib/format';
+import { clock, clockSec, fmtRate, SOURCES } from '../lib/format';
 import type { History, VitalKey } from '../types';
+import { Tip } from './Tooltip';
 
 interface Band { from: number; to: number; score: number }
 
@@ -67,15 +68,18 @@ export default function VitalsTrendChart({ kind, history, minutes, showSources }
   return (
     <section className="card card-pad flex flex-col gap-3 min-w-0" aria-labelledby={`trend-${kind}`}>
       <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-        <h3 id={`trend-${kind}`} className="t-head">{spec.title}</h3>
-        <span className="t-label text-mute tnum">
+        <h3 id={`trend-${kind}`} className="t-head"><Tip term={kind}>{spec.title}</Tip></h3>
+        <Tip term="coverageTrend" className="t-label text-mute tnum">
           {latest === null ? 'no recent reading' : `latest ${fmtRate(latest)} ${spec.unit}`}
           {rows.length > 0 && ` · measured ${Math.round(coverage * 100)}% of the time`}
-        </span>
-        <button type="button" className="btn btn-ghost btn-sm ml-auto" onClick={() => setTable((x) => !x)} aria-pressed={table}>
-          {table ? <LineIcon className="h-4 w-4" aria-hidden /> : <Table2 className="h-4 w-4" aria-hidden />}
-          {table ? 'Chart' : 'Table'}
-        </button>
+        </Tip>
+        <Tip title={table ? 'Chart view' : 'Table view'} asChild
+             content={table ? 'Show the values as a chart again.' : 'Show the same values as a table, for exact numbers and screen readers.'}>
+          <button type="button" className="btn btn-ghost btn-sm ml-auto" onClick={() => setTable((x) => !x)} aria-pressed={table}>
+            {table ? <LineIcon className="h-4 w-4" aria-hidden /> : <Table2 className="h-4 w-4" aria-hidden />}
+            {table ? 'Chart' : 'Table'}
+          </button>
+        </Tip>
       </div>
 
       {rows.length < 2 ? (
@@ -84,13 +88,13 @@ export default function VitalsTrendChart({ kind, history, minutes, showSources }
         <div className="max-h-[240px] overflow-auto rounded-md border border-line">
           <table className="data">
             <thead className="sticky top-0 bg-surface2">
-              <tr><th>Time</th><th className="num">Shown</th>
-                {showSources && present.map((s) => <th key={s} className="num">{SOURCES[s]?.name}</th>)}</tr>
+              <tr><th>Time</th><th className="num">Shown ({spec.unit})</th>
+                {showSources && present.map((s) => <th key={s} className="num">{SOURCES[s]?.name} ({spec.unit})</th>)}</tr>
             </thead>
             <tbody>
               {rows.filter((_, i) => i % Math.max(1, Math.floor(rows.length / 60)) === 0).reverse().map((r) => (
                 <tr key={r.t}>
-                  <td className="text-ink2 tnum">{clock(r.t)}</td>
+                  <td className="text-ink2 tnum">{clockSec(r.t)}</td>
                   <td className="num">{r.v === null ? <span className="text-mute">–</span> : fmtRate(r.v)}</td>
                   {showSources && present.map((s) => <td key={s} className="num">{r[s] === null ? <span className="text-mute">–</span> : (r[s] as number).toFixed(1)}</td>)}
                 </tr>
@@ -117,10 +121,10 @@ export default function VitalsTrendChart({ kind, history, minutes, showSources }
                          const r = payload[0].payload as Row;
                          return (
                            <div className="rounded-md border border-line bg-surface2 px-3 py-2 shadow-lg flex flex-col gap-0.5">
-                             <span className="t-micro text-mute tnum">{clock(r.t)}</span>
+                             <span className="t-micro text-ink2 tnum">{clockSec(r.t)}</span>
                              <span className="t-label tnum">Shown: {r.v === null ? 'no reading' : `${fmtRate(r.v)} ${spec.unit}`}</span>
                              {showSources && present.map((s) => (
-                               <span key={s} className="t-micro text-ink2 tnum">{SOURCES[s]?.name}: {r[s] === null ? '–' : (r[s] as number).toFixed(1)}</span>
+                               <span key={s} className="t-micro text-ink2 tnum">{SOURCES[s]?.name}: {r[s] === null ? '–' : `${(r[s] as number).toFixed(1)} ${spec.unit}`}</span>
                              ))}
                            </div>
                          );
@@ -138,17 +142,20 @@ export default function VitalsTrendChart({ kind, history, minutes, showSources }
       )}
 
       <div className="flex flex-wrap items-center gap-x-4 gap-y-1 t-micro text-mute">
-        <span className="inline-flex items-center gap-1.5"><Swatch color={lineColor} />Shown ({SOURCES[fusedKey]?.name.toLowerCase()})</span>
+        <Tip term="shownLine" className="inline-flex items-center gap-1.5">
+          <Swatch color={lineColor} />Shown ({SOURCES[fusedKey]?.name.toLowerCase()})
+        </Tip>
         {showSources && present.map((s) => (
-          <span key={s} className="inline-flex items-center gap-1.5">
+          <Tip key={s} title={SOURCES[s]?.name} className="inline-flex items-center gap-1.5"
+               content={`${SOURCES[s]?.how}.${SOURCES[s]?.learned ? ' Experimental learned model, still being validated (dashed line).' : ''}`}>
             <Swatch color={SOURCES[s]?.color ?? 'var(--ink-2)'} dash={SOURCES[s]?.dash} width={1.75} />
             {SOURCES[s]?.name}{SOURCES[s]?.learned ? ' (exp.)' : ''}
-          </span>
+          </Tip>
         ))}
-        <span className="inline-flex items-center gap-1.5 ml-auto">
+        <Tip term="bands" className="inline-flex items-center gap-1.5 ml-auto">
           Shading = EWS band
-          {[1, 2, 3].map((s) => <i key={s} className="h-2.5 w-4 rounded-sm border border-line" style={{ background: BAND_FILL[s] }} title={`+${s}`} />)}
-        </span>
+          {[1, 2, 3].map((s) => <i key={s} className="h-2.5 w-4 rounded-sm border border-line" style={{ background: BAND_FILL[s] }} aria-hidden />)}
+        </Tip>
       </div>
     </section>
   );

@@ -9,6 +9,7 @@ import { Line, LineChart, ResponsiveContainer, Tooltip, YAxis } from 'recharts';
 import { useThermal } from '../hooks/usePatientData';
 import type { PatientSnapshot } from '../types';
 import ThermalCanvas, { robustRange, ThermalLegend } from './ThermalCanvas';
+import { InfoTip, Tip } from './Tooltip';
 
 const QUALITY_TEXT = { good: 'good', fair: 'fair', poor: 'poor, realign', unchecked: 'unchecked' } as const;
 
@@ -27,11 +28,16 @@ export default function ThermalPanel({ snap }: { snap: PatientSnapshot }) {
   return (
     <section className="card card-pad flex flex-col gap-4" aria-labelledby="thermal-h">
       <div className="flex flex-wrap items-center gap-3">
-        <h2 id="thermal-h" className="t-head">Thermal camera</h2>
+        <div className="flex items-center gap-2">
+          <h2 id="thermal-h" className="t-head">Thermal camera</h2>
+          <InfoTip term="thermal" />
+        </div>
         <span className="t-micro text-mute">ESP32, 80 × 62 sensor</span>
-        <Link to={alignHref} className="btn btn-ghost h-8 px-2 ml-auto">
-          <Crosshair className="h-4 w-4" aria-hidden />{reg?.registered ? 'Realign' : 'Align with colour camera'}
-        </Link>
+        <Tip term="thermalAlign" asChild>
+          <Link to={alignHref} className="btn btn-ghost h-8 px-2 ml-auto">
+            <Crosshair className="h-4 w-4" aria-hidden />{reg?.registered ? 'Realign' : 'Align with colour camera'}
+          </Link>
+        </Tip>
       </div>
 
       {!grid ? (
@@ -50,16 +56,16 @@ export default function ThermalPanel({ snap }: { snap: PatientSnapshot }) {
           <div className="flex flex-col gap-2">
             <ThermalCanvas grid={grid} range={range} roi={th?.roi}
                            label={`Live thermal image. Range ${range[0].toFixed(1)} to ${range[1].toFixed(1)} degrees.`} />
-            <ThermalLegend lo={range[0]} hi={range[1]} />
+            <Tip term="thermalScale" className="block"><ThermalLegend lo={range[0]} hi={range[1]} /></Tip>
           </div>
 
           <div className="flex flex-col gap-3 min-w-0">
-            <div className="flex flex-col gap-1">
+            <Tip term="breathTrace" className="flex flex-col gap-1">
               <span className="t-label text-ink2">
                 {atNostrils ? 'Breath temperature at the nostrils' : 'Temperature at the warmest spot'}
               </span>
               <span className="t-micro text-mute">last 30 s; warms on each exhale, cools on each inhale</span>
-            </div>
+            </Tip>
             <div className="h-[96px] rounded-lg border border-line" role="img"
                  aria-label="Breath temperature over the last 30 seconds">
               {trace.length > 4 ? (
@@ -85,10 +91,12 @@ export default function ThermalPanel({ snap }: { snap: PatientSnapshot }) {
                 {atNostrils
                   ? 'Aligned with the colour camera; breathing is read at the nostrils.'
                   : 'Aligned, but no face in view right now; using the warmest spot.'}
-                <span className="block t-micro text-mute tnum">
-                  Alignment {QUALITY_TEXT[reg.quality ?? 'unchecked']}
-                  {reg.error_px != null && reg.n_pairs > 4 ? `, average error ${reg.error_px.toFixed(1)} px` : ''}
-                  {reg.source === 'camera.yaml' ? ', from camera.yaml' : ''}
+                <span className="flex">
+                  <Tip term="alignQuality" className="t-micro text-mute tnum">
+                    Alignment {QUALITY_TEXT[reg.quality ?? 'unchecked']}
+                    {reg.error_px != null && reg.n_pairs > 4 ? `, average error ${reg.error_px.toFixed(1)} px` : ''}
+                    {reg.source === 'camera.yaml' ? ', from camera.yaml' : ''}
+                  </Tip>
                 </span>
               </p>
             ) : (

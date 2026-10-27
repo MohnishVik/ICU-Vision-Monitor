@@ -28,7 +28,7 @@ export interface Vital {
   stale: boolean;
   age_s: number | null;
   unit: string;
-  reason: string | null;      // why value is null: no_valid_input | paths_disagree | warming_up
+  reason: string | null;      // why value is null: no_valid_input | paths_disagree | warming_up | motion | low_light
   subscore: number | null;    // NEWS2 sub-score
   sources: Record<string, SourceReading>;
   learned_fused: boolean;

@@ -18,6 +18,13 @@ Quality gate (shared)
   of the strongest peak / total power in the band. Below peak_power_frac_min the
   Measurement is returned with value=None; above peak_power_frac_good sqi reaches 1.0.
 
+Motion gate (depth path)
+  A posture change moves the chest box by tens of millimetres in a fraction of a second,
+  more than all the breathing in the window put together. When the half-second mean
+  depth jumps by more than motion_mm (src/modules/motion.py) the window is dropped and
+  refilled once the patient is still; until then the path reports value=None with
+  meta["reason"] = "motion", so the screen says "Patient moving", not "signal too weak".
+
 Apnea gate (depth path only, computed before the spectral estimate)
   Compares the amplitude of the recent sub-window against the full window. A sustained
   drop below amplitude_ratio_below sets meta["apnea"]=True and forces value=None, so a
@@ -36,6 +43,7 @@ from typing import Deque, Optional
 import numpy as np
 import scipy.signal
 
+from src.modules.motion import MotionGate
 from src.types import FrameBundle, Measurement, ROIBundle
 
 
@@ -53,6 +61,8 @@ class _RRPathCfg:
     detrend: str = "linear"               # "linear" (live) or "quadratic" (legacy offline)
     smooth_s: float = 0.35
     nfft: int = 16384
+    highpass_hz: Optional[float] = None   # remove posture drift slower than this (replaces detrend)
+    segment_s: float = 10.0               # Welch segment length; longer resolves slow breathing
 
 
 @dataclass
@@ -80,6 +90,8 @@ class RRConfig:
     fallback_roi_frac: dict         # {"x":[0.44,0.65], "y":[0.54,0.82]} for depth
     min_valid_depth_units: int = 5
     min_valid_pixels: int      = 30
+    motion_mm: float           = 20.0      # half-second mean depth step that counts as movement
+    body_band_mm: Optional[float] = 150.0  # keep chest pixels within this of the median depth
 
     @classmethod
     def from_dict(cls, cfg: dict) -> "RRConfig":
@@ -95,12 +107,16 @@ class RRConfig:
                 detrend=d.get("detrend", "linear"),
                 smooth_s=float(d.get("smooth_s", 0.35)),
                 nfft=int(d.get("psd", {}).get("nfft", 16384)),
+                highpass_hz=(float(d["highpass_hz"]) if d.get("highpass_hz") else None),
+                segment_s=float(d.get("segment_s", 10.0)),
             ),
             thermal=_RRPathCfg(
                 window_s=float(t["window_s"]),
                 update_every_s=float(t["update_every_s"]),
                 min_fill_s=float(t["min_fill_s"]),
                 band_hz=tuple(t["band_hz"]),
+                highpass_hz=(float(t["highpass_hz"]) if t.get("highpass_hz") else None),
+                segment_s=float(t.get("segment_s", 10.0)),
             ),
             quality=_QualityCfg(**{k: rr["quality"][k] for k in
                                    ("peak_power_frac_min", "peak_power_frac_good",
@@ -110,6 +126,8 @@ class RRConfig:
             fallback_roi_frac=d["fallback_roi_frac"],
             min_valid_depth_units=int(d.get("min_valid_depth_units", 5)),
             min_valid_pixels=int(d.get("min_valid_pixels", 30)),
+            motion_mm=float(d.get("motion_mm", 20.0)),
+            body_band_mm=(None if d.get("body_band_mm", 150.0) is None else float(d.get("body_band_mm", 150.0))),
         )
 
 
@@ -175,6 +193,21 @@ def _detrend(sig: np.ndarray, kind: str) -> np.ndarray:
     return scipy.signal.detrend(sig, type="linear")
 
 
+def _highpass(sig: np.ndarray, fs: float, cutoff_hz: float) -> np.ndarray:
+    """
+    Remove slow posture drift (settling into the chair, sliding down) before the spectrum.
+    A straight-line detrend cannot follow a curved drift, and what it leaves behind sits at
+    the bottom of the breathing band, where it out-powers the breaths and pulls the
+    estimate towards 4-6 /min. A zero-phase 2nd-order high-pass removes it while passing
+    breathing at the cutoff and above (0.08 Hz = 4.8 /min).
+    """
+    x = np.asarray(sig, dtype=np.float64)
+    if len(x) < 16 or not 0 < cutoff_hz < fs / 2:
+        return scipy.signal.detrend(x, type="linear").astype(np.float32)
+    b, a = scipy.signal.butter(2, cutoff_hz / (fs / 2), btype="highpass")
+    return scipy.signal.filtfilt(b, a, x - x.mean()).astype(np.float32)
+
+
 def _smooth(sig: np.ndarray, win_samples: int) -> np.ndarray:
     """Moving-average smoother used to attenuate cardiac micro-vibrations."""
     win_samples = max(3, int(win_samples))
@@ -191,13 +224,15 @@ def _spectral_rate_bpm(
     band_hz: tuple[float, float],
     quality: _QualityCfg,
     nfft: int,
+    segment_s: float = 10.0,
 ) -> tuple[Optional[float], float, dict]:
     """
     Welch PSD -> strongest peak inside band_hz.
     Returns (rate_bpm, peak_power_frac, debug). rate_bpm is None if the band is empty
-    after filtering.
+    after filtering. A 10 s segment holds under two breaths at 10 /min, which blurs the
+    peak; breathing uses 20 s (signal.yaml rr.depth.segment_s).
     """
-    nperseg = min(len(sig), max(32, int(fs * 10)))
+    nperseg = min(len(sig), max(32, int(fs * segment_s)))
     freqs, psd = scipy.signal.welch(
         sig, fs=fs, window="hann", nperseg=nperseg, nfft=nfft
     )
@@ -275,13 +310,27 @@ def _is_apnea_now(
 # ROI sampling helpers
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _mean_from_depth_roi(depth_crop: np.ndarray, min_valid: int, min_pixels: int) -> Optional[float]:
-    """Mean of valid depth pixels in a crop. Returns None when the crop is unusable."""
+def _mean_from_depth_roi(depth_crop: np.ndarray, min_valid: int, min_pixels: int,
+                         body_band: Optional[float] = None) -> Optional[float]:
+    """
+    Mean of valid depth pixels in a crop. Returns None when the crop is unusable.
+
+    With body_band set, only pixels within +-body_band of the crop's median depth count.
+    The chest box usually catches some wall or chair behind the shoulders, metres
+    further away; when the box shifts by a pixel the share of those pixels changes and
+    drags the mean by far more than a breath moves the chest. The median sits on the
+    body, so the band keeps the chest and drops the background.
+    """
     if depth_crop is None or depth_crop.size == 0:
         return None
     valid = depth_crop[depth_crop > min_valid]
     if valid.size < min_pixels:
         return None
+    if body_band is not None:
+        med = float(np.median(valid))
+        body = valid[np.abs(valid.astype(np.float32) - med) <= body_band]
+        if body.size >= min_pixels:
+            valid = body
     return float(np.mean(valid))
 
 
@@ -324,6 +373,8 @@ class RRModule:
         self._depth   = _Path(cfg=cfg.depth,   fs_nominal=depth_fs,   source="rr.depth")
         self._thermal = _Path(cfg=cfg.thermal, fs_nominal=thermal_fs, source="rr.thermal")
         self._apnea_state = _ApneaState()
+        self._depth_motion = MotionGate(depth_fs, abs_thresh=cfg.motion_mm)
+        self._last_motion_report = 0.0
         self._last_thermal_ts: Optional[float] = None
         self._thermal_src: Optional[str] = None     # "nostril" | "warmest_patch"
 
@@ -336,6 +387,12 @@ class RRModule:
         self._sample_thermal(bundle, roi, now)
 
         out: dict[str, Measurement] = {}
+        if self._depth_motion.recent(now, self.cfg.depth.min_fill_s) and not self._depth.ready(now) \
+                and now - self._last_motion_report >= self.cfg.depth.update_every_s:
+            # refilling after movement: say so instead of going quiet
+            self._last_motion_report = now
+            out["rr.depth"] = Measurement(None, 0.0, time.time(), "rr.depth", 0.0,
+                                          {"reason": "motion", "apnea": False})
         if self._depth.ready(now):
             m = self._estimate(self._depth, source="rr.depth", with_apnea=True)
             if m is not None:
@@ -357,7 +414,12 @@ class RRModule:
         else:
             crop = _fallback_depth_roi(bundle.depth, self.cfg.fallback_roi_frac)
 
-        mean_z = _mean_from_depth_roi(crop, self.cfg.min_valid_depth_units, self.cfg.min_valid_pixels)
+        mean_z = _mean_from_depth_roi(crop, self.cfg.min_valid_depth_units, self.cfg.min_valid_pixels,
+                                      self.cfg.body_band_mm)
+        if mean_z is not None and self._depth_motion.update(mean_z, now):
+            self._depth.reset()                        # movement: start the window again
+            self._apnea_state = _ApneaState()
+            return
         if mean_z is not None:
             self._depth.append(mean_z, now)
         elif self._depth.sig:
@@ -404,11 +466,12 @@ class RRModule:
             trig = _is_apnea_now(sig, ts, fs, self.cfg.apnea)
             apnea_now, apnea_dur = self._apnea_state.update(trig, ts[-1], self.cfg.apnea.min_duration_s)
 
-        detrended = _detrend(sig, path.cfg.detrend)
+        detrended = (_highpass(sig, fs, path.cfg.highpass_hz) if path.cfg.highpass_hz
+                     else _detrend(sig, path.cfg.detrend))
         smoothed  = _smooth(detrended, int(path.cfg.smooth_s * fs))
 
         rate_bpm, frac, dbg = _spectral_rate_bpm(
-            smoothed, fs, path.cfg.band_hz, self.cfg.quality, path.cfg.nfft
+            smoothed, fs, path.cfg.band_hz, self.cfg.quality, path.cfg.nfft, path.cfg.segment_s
         )
         sqi = _sqi_from_frac(frac, self.cfg.quality)
 

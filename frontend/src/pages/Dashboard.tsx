@@ -51,8 +51,12 @@ export default function Dashboard() {
           {acked > 0 && ` · ${acked} acknowledged ${acked === 1 ? 'alarm' : 'alarms'} still open`}
           {recording > 0 && ` · ${recording} recording a comparison session`}
         </p>
+        <p className="t-label text-mute max-w-[80ch]">
+          One strip per bed, always in the same order: heart and breathing rate with their last 30 minutes,
+          and the early-warning score; select a bed to open it.
+        </p>
       </header>
-      <div className="flex flex-col gap-3">
+      <div className="stagger flex flex-col gap-3">
         {ward.map((p) => <BedStrip key={p.patient_id} p={p} />)}
       </div>
     </div>

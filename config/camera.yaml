@@ -21,8 +21,14 @@ d435:
   # exposure_mode:
   #   auto_lock - meter the room for auto_lock_settle_s, then freeze exposure/gain/WB (default)
   #   fixed     - always use locked_exposure / locked_gain / locked_white_balance below
+  #   auto_lock reproduces the camera's own auto picture by measurement (brightness and
+  #   red/blue balance), because many hosts never report the values auto chose. In a dim
+  #   room it may also raise gamma / brightness once exposure (33 ms) and gain are maxed.
   exposure_mode: auto_lock
   auto_lock_settle_s: 2.5
+  target_luma: null            # null = as bright as camera auto; or a mean level 30-200
+  locked_gamma: 300            # neutral tone curve (camera default)
+  locked_brightness: 0
   locked_exposure: 156         # fixed mode only; units of 0.1 ms
   locked_gain: 64              # fixed mode only
   locked_white_balance: 4600   # fixed mode only; kelvin

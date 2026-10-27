@@ -1,6 +1,9 @@
 // ui.tsx — small shared pieces: chips, signal-quality meter, experimental tag, section heading.
+// Each piece that carries a meaning also carries its explanation (Tooltip.tsx, lib/glossary.ts).
 import { FlaskConical } from 'lucide-react';
 import type { ReactNode } from 'react';
+import type { GlossKey } from '../lib/glossary';
+import { InfoTip, Tip } from './Tooltip';
 
 export type ChipTone = 'neutral' | 'amber' | 'red' | 'ok' | 'sim';
 
@@ -12,36 +15,40 @@ const TONE: Record<ChipTone, string> = {
   sim: 'border-dashed',
 };
 
-/** Icon + text pill. Colour never carries meaning alone. */
-export function Chip({ tone = 'neutral', icon, children, title }: {
-  tone?: ChipTone; icon?: ReactNode; children: ReactNode; title?: string;
+/** Icon + text pill. Colour never carries meaning alone; `term` / `tip` explain it on hover and focus. */
+export function Chip({ tone = 'neutral', icon, children, term, tip }: {
+  tone?: ChipTone; icon?: ReactNode; children: ReactNode; term?: GlossKey; tip?: ReactNode;
 }) {
-  return (
-    <span title={title} className={`chip ${TONE[tone]}`}>
+  const body = (
+    <>
       {icon && <span aria-hidden className="inline-flex">{icon}</span>}
       {children}
-    </span>
+    </>
   );
+  if (!term && !tip) return <span className={`chip ${TONE[tone]}`}>{body}</span>;
+  return <Tip term={term} content={tip} className={`chip ${TONE[tone]}`}>{body}</Tip>;
 }
 
 /** Marks anything produced by a learned model that has not been validated yet. */
 export function Experimental({ compact = false }: { compact?: boolean }) {
   return (
-    <span className="chip border-dashed" title="Learned model, not yet validated against references. Never drives alarms.">
+    <Tip term="learned" className="chip border-dashed">
       <FlaskConical aria-hidden />{compact ? 'Exp.' : 'Experimental'}
-    </span>
+    </Tip>
   );
 }
 
 /** Signal quality 0–1 as five rising bars + a number. Orange below 40 %. */
-export function Quality({ sqi, label = 'Signal', compact = false }: {
-  sqi: number | null | undefined; label?: string; compact?: boolean;
+export function Quality({ sqi, label = 'Signal', compact = false, term = 'sqi' }: {
+  sqi: number | null | undefined; label?: string; compact?: boolean; term?: GlossKey;
 }) {
   const q = sqi === null || sqi === undefined || !Number.isFinite(sqi) ? 0 : Math.max(0, Math.min(1, sqi));
   const lit = Math.round(q * 5);
   const weak = q > 0 && q < 0.4;
+  const now = q > 0 ? `Now ${Math.round(q * 100)} %${weak ? ', below 40 %: less certain.' : '.'}` : 'Now: none.';
   return (
-    <span className="inline-flex items-center gap-2" role="meter" aria-label={`${label} quality`}
+    <Tip term={term} content={now} asChild>
+    <span className="tip-target inline-flex items-center gap-2" role="meter" aria-label={`${label} quality`} tabIndex={0}
           aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(q * 100)}>
       <span className="flex items-end gap-[2px] h-3.5" aria-hidden>
         {[0, 1, 2, 3, 4].map((i) => (
@@ -56,15 +63,20 @@ export function Quality({ sqi, label = 'Signal', compact = false }: {
         </span>
       )}
     </span>
+    </Tip>
   );
 }
 
-export function SectionHead({ id, title, children }: {
-  id?: string; title: string; children?: ReactNode;
+/** Section heading, with an optional (i) that explains what the section shows. */
+export function SectionHead({ id, title, info, children }: {
+  id?: string; title: string; info?: GlossKey; children?: ReactNode;
 }) {
   return (
     <div className="flex flex-wrap items-end gap-x-3 gap-y-2">
-      <h2 id={id} className="t-head text-ink min-w-0">{title}</h2>
+      <div className="flex items-center gap-2 min-w-0">
+        <h2 id={id} className="t-head text-ink min-w-0">{title}</h2>
+        {info && <InfoTip term={info} />}
+      </div>
       {children && <div className="ml-auto flex flex-wrap items-center gap-2">{children}</div>}
     </div>
   );

@@ -1,7 +1,10 @@
 // ModuleHealth.tsx — which parts of the pipeline are running, and why not if not.
+// Module names and states explain themselves on hover / focus (lib/glossary.ts mod_*).
 import { CircleCheck, CircleDashed, CircleX, Hourglass, TriangleAlert } from 'lucide-react';
 import { MODULE_TEXT } from '../lib/format';
+import { glossKey } from '../lib/glossary';
 import type { ModuleStatus } from '../types';
+import { Tip } from './Tooltip';
 
 const ORDER = ['pose', 'rr', 'rr_learned', 'hr', 'hr_learned', 'fall', 'taa', 'pain'];
 
@@ -30,9 +33,11 @@ export default function ModuleHealth({ modules }: { modules: Record<string, Modu
             <span className="mt-0.5">{ICON[state]}</span>
             <div className="flex flex-col min-w-0 flex-1">
               <div className="flex items-baseline gap-2">
-                <span className="t-label text-ink">{MODULE_TEXT[n] ?? n}</span>
-                <span className="t-micro text-mute">{WORD[state]}</span>
-                {m.errors > 0 && <span className="t-micro text-mute tnum ml-auto">{m.errors} errors</span>}
+                <Tip term={glossKey('mod_', n, 'modules')} title={MODULE_TEXT[n] ?? n} className="t-label text-ink">
+                  {MODULE_TEXT[n] ?? n}
+                </Tip>
+                <Tip term={`mod_${state}`} className="t-micro text-mute tip-term">{WORD[state]}</Tip>
+                {m.errors > 0 && <Tip term="moduleErrors" className="t-micro text-mute tnum ml-auto">{m.errors} errors</Tip>}
               </div>
               {m.detail && <span className="t-micro text-ink2 break-words">{m.detail}</span>}
             </div>

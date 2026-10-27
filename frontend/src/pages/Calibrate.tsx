@@ -5,6 +5,7 @@
 import { ArrowLeft, Check, RefreshCw, RotateCcw, Undo2 } from 'lucide-react';
 import { useRef, useState, type KeyboardEvent, type PointerEvent } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
+import { InfoTip, Tip } from '../components/Tooltip';
 import { useCalibration } from '../hooks/usePatientData';
 import { api, urls } from '../lib/api';
 
@@ -90,10 +91,21 @@ export default function Calibrate() {
   return (
     <div className="flex flex-col gap-5">
       <header className="flex flex-wrap items-center gap-3">
-        <Link to={`/patients/${encodeURIComponent(id)}`} className="btn btn-ghost px-2" aria-label="Back to bed">
-          <ArrowLeft className="h-4 w-4" aria-hidden />
-        </Link>
-        <h1 className="font-cond font-semibold text-[40px] leading-none tracking-[-0.015em]">Mark the {label}</h1>
+        <Tip title="Back to the bed" content="Leave without changing the current setup." asChild side="bottom">
+          <Link to={`/patients/${encodeURIComponent(id)}`} className="btn btn-ghost px-2" aria-label="Back to bed">
+            <ArrowLeft className="h-4 w-4" aria-hidden />
+          </Link>
+        </Tip>
+        <div className="flex items-center gap-3 min-w-0">
+          <h1 className="font-cond font-semibold text-[40px] leading-none tracking-[-0.015em]">Mark the {label}</h1>
+          <InfoTip term="chairCal" />
+        </div>
+        <p className="basis-full t-label text-mute">
+          <span className="block max-w-[80ch]">
+            Trace the seat once per session so the monitor knows where the patient should be; position and fall
+            detection are judged against it.
+          </span>
+        </p>
       </header>
 
       <div className="grid gap-5 lg:grid-cols-12">
@@ -160,43 +172,56 @@ export default function Calibrate() {
               this area and uses its depth as the floor reference for falls.
             </p>
 
-            <div role="radiogroup" aria-label="Furniture type" className="inline-flex w-fit rounded-lg border border-line p-0.5">
-              {(['chair', 'bed'] as const).map((l) => (
-                <button key={l} type="button" role="radio" aria-checked={label === l} onClick={() => setLabel(l)}
-                        className={`h-8 px-4 rounded-md t-label capitalize ${label === l ? 'bg-surface2 text-ink' : 'text-ink2 hover:text-ink'}`}>
-                  {l}
-                </button>
-              ))}
-            </div>
+            <Tip term="furniture" asChild>
+              <div role="radiogroup" aria-label="Furniture type" className="inline-flex w-fit rounded-lg border border-line p-0.5">
+                {(['chair', 'bed'] as const).map((l) => (
+                  <button key={l} type="button" role="radio" aria-checked={label === l} onClick={() => setLabel(l)}
+                          className={`hit h-8 px-4 rounded-md t-label capitalize ${label === l ? 'bg-surface2 text-ink' : 'text-ink2 hover:text-ink'}`}>
+                    {l}
+                  </button>
+                ))}
+              </div>
+            </Tip>
 
             <div className="flex flex-wrap gap-2">
-              <button type="button" className="btn" disabled={!pts.length} onClick={() => setPts((s) => s.slice(0, -1))}>
-                <Undo2 className="h-4 w-4" aria-hidden />Undo
-              </button>
-              <button type="button" className="btn" disabled={!pts.length} onClick={() => setPts([])}>
-                <RotateCcw className="h-4 w-4" aria-hidden />Clear
-              </button>
-              <button type="button" className="btn" onClick={() => { setImgError(false); setNonce((n) => n + 1); }}>
-                <RefreshCw className="h-4 w-4" aria-hidden />New frame
-              </button>
+              <Tip title="Undo" content="Remove the last corner you placed." asChild>
+                <button type="button" className="btn" disabled={!pts.length} onClick={() => setPts((s) => s.slice(0, -1))}>
+                  <Undo2 className="h-4 w-4" aria-hidden />Undo
+                </button>
+              </Tip>
+              <Tip title="Clear" content="Remove all corners and start again." asChild>
+                <button type="button" className="btn" disabled={!pts.length} onClick={() => setPts([])}>
+                  <RotateCcw className="h-4 w-4" aria-hidden />Clear
+                </button>
+              </Tip>
+              <Tip title="New frame" content="Take a fresh still from the camera, for example after moving the chair. Faces are blurred." asChild>
+                <button type="button" className="btn" onClick={() => { setImgError(false); setNonce((n) => n + 1); }}>
+                  <RefreshCw className="h-4 w-4" aria-hidden />New frame
+                </button>
+              </Tip>
             </div>
 
-            <button type="button" className="btn btn-primary h-11 justify-center" disabled={pts.length !== 4 || saving}
-                    onClick={() => void save()}>
-              <Check className="h-4 w-4" aria-hidden />{saving ? 'Saving' : 'Start monitoring'}
-            </button>
+            <Tip title="Start monitoring" asChild
+                 content="Saves the four corners; the server measures the seat’s distance and monitoring starts. Needs all four corners.">
+              <button type="button" className="btn btn-primary h-11 justify-center" disabled={pts.length !== 4 || saving}
+                      onClick={() => void save()}>
+                <Check className="h-4 w-4" aria-hidden />{saving ? 'Saving' : 'Start monitoring'}
+              </button>
+            </Tip>
 
             {status?.has_saved && (
-              <button type="button" className="btn btn-ghost justify-center" disabled={saving} onClick={() => void reuse()}>
-                Use last calibration instead
-              </button>
+              <Tip term="reuseCalibration" asChild>
+                <button type="button" className="btn btn-ghost justify-center" disabled={saving} onClick={() => void reuse()}>
+                  Use last calibration instead
+                </button>
+              </Tip>
             )}
             {error && <p className="t-label text-red" role="alert">{error}</p>}
           </section>
 
           {status?.calibrated && status.seat_depth_m != null && (
             <p className="t-label text-ink2 px-1">
-              Current seat is {status.seat_depth_m.toFixed(2)} m from the camera.
+              <Tip term="seatDepth">Current seat is {status.seat_depth_m.toFixed(2)} m from the camera.</Tip>
             </p>
           )}
         </aside>
