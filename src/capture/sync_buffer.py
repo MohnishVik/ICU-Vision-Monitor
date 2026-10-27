@@ -61,11 +61,21 @@ class SyncBuffer:
             time.sleep(0.5)   # give the ESP32 a moment to answer
 
         # D435 blocks until the hardware is ready (+1 s settling)
-        self._d435.start()
+        try:
+            self._d435.start()
+        except Exception:
+            self._stop_thermal()      # no D435: do not leave a thermal poller running
+            raise
 
     def stop(self) -> None:
-        """Stop both streams cleanly."""
-        self._d435.stop()
+        """Stop both streams cleanly. The thermal poller is stopped even when the D435
+        fails to stop (e.g. it never started), so retries never pile up poll threads."""
+        try:
+            self._d435.stop()
+        finally:
+            self._stop_thermal()
+
+    def _stop_thermal(self) -> None:
         if self._thermal:
             self._thermal.stop()
 

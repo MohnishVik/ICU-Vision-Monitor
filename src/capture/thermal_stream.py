@@ -81,6 +81,7 @@ class ThermalStream:
         self.base_ip     = cfg.get("base_ip", "http://192.168.4.1")
         self.timeout_s   = cfg.get("timeout_s", 2.0)
         self.retry_s     = cfg.get("retry_delay_s", 1.0)
+        self.rediscover_s = float(cfg.get("rediscover_s", 10.0))   # while no endpoint answers
 
         # Active endpoint — resolved during start()
         self._endpoint: str | None = cfg.get("endpoint", "/thermal/frame")
@@ -90,6 +91,7 @@ class ThermalStream:
         self._latest_ts:    float | None      = None
         self._lock    = threading.Lock()
         self._running = False
+        self._wake    = threading.Event()        # interrupts the rediscovery wait on stop()
         self._thread: threading.Thread | None = None
         self._session: requests.Session | None = None
 
@@ -97,32 +99,43 @@ class ThermalStream:
 
     def start(self) -> None:
         """
-        Resolve the working endpoint, then start the background poll thread.
-        Blocks briefly during endpoint resolution (< 5 s in the normal case).
+        Start the background thread and return at once. The thread resolves the
+        working endpoint (cached, then a scan), then polls. With the ESP32 unreachable
+        a scan takes up to ~12 x timeout_s, so it must not hold up the D435 start; if
+        nothing answers, discovery is retried every rediscover_s so a thermal camera
+        that comes up later is picked up without a restart.
         """
         self._session = requests.Session()
-
-        working_url = self._resolve_endpoint()
-
-        if working_url is None:
-            print("[Thermal] WARN: no working endpoint found. "
-                  "Thermal stream disabled — continuing without it.")
-            self._running = False
-            return
-
-        self._url     = working_url
         self._running = True
+        self._wake.clear()
         self._thread  = threading.Thread(
-            target=self._poll_loop,
+            target=self._run,
             name="thermal-poll",
             daemon=True,
         )
         self._thread.start()
-        print(f"[Thermal] Polling started → {self._url}")
+
+    def _run(self) -> None:
+        warned = False
+        while self._running:
+            working_url = self._resolve_endpoint(verbose=not warned)   # log the scan once
+            if working_url is not None or not self._running:
+                break
+            if not warned:
+                print("[Thermal] WARN: no working endpoint found. Continuing without thermal; "
+                      f"retrying discovery every {self.rediscover_s:.0f} s.")
+                warned = True
+            self._wake.wait(self.rediscover_s)
+        if not self._running:
+            return
+        self._url = working_url
+        print(f"[Thermal] Polling started -> {self._url}")
+        self._poll_loop()
 
     def stop(self) -> None:
         """Stop background thread and close HTTP session."""
         self._running = False
+        self._wake.set()
         if self._thread:
             self._thread.join(timeout=3.0)
         if self._session:
@@ -150,7 +163,7 @@ class ThermalStream:
 
     # ── endpoint resolution ────────────────────────────────────────────────────
 
-    def _resolve_endpoint(self) -> str | None:
+    def _resolve_endpoint(self, verbose: bool = True) -> str | None:
         """
         Try cached endpoint first. If it fails, scan all known endpoints.
         Writes the winner back to camera.yaml (targeted line replace).
@@ -167,10 +180,13 @@ class ThermalStream:
             return cached_url
 
         # 2. Cached endpoint failed — auto-scan
-        print(f"[Thermal] Cached endpoint {cached_url!r} not responding. "
-              "Auto-scanning endpoints...")
+        if verbose:
+            print(f"[Thermal] Cached endpoint {cached_url!r} not responding. "
+                  "Auto-scanning endpoints...")
 
         for path in _SCAN_ENDPOINTS:
+            if not self._running:
+                return None   # stop() was called mid-scan
             if path == cached:
                 continue   # already tried
             url = f"{self.base_ip}{path}"
@@ -202,7 +218,7 @@ class ThermalStream:
         with a regex targeted at the endpoint key, write back.
         """
         if not self.config_path.exists():
-            print(f"[Thermal] WARN: {self.config_path} not found — "
+            print(f"[Thermal] WARN: {self.config_path} not found - "
                   "endpoint not persisted.")
             return
 
@@ -217,11 +233,11 @@ class ThermalStream:
 
             if n == 0:
                 print("[Thermal] WARN: could not find 'endpoint:' key in "
-                      f"{self.config_path} — endpoint not persisted.")
+                      f"{self.config_path} - endpoint not persisted.")
                 return
 
             self.config_path.write_text(new_text, encoding="utf-8")
-            print(f"[Thermal] camera.yaml updated → endpoint: \"{new_endpoint}\"")
+            print(f"[Thermal] camera.yaml updated -> endpoint: \"{new_endpoint}\"")
 
         except OSError as e:
             print(f"[Thermal] WARN: could not write {self.config_path}: {e}")

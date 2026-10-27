@@ -1,6 +1,7 @@
 # Intel RealSense D435
-# CRITICAL: auto_exposure and auto_white_balance must stay OFF
-# Changing exposure/WB values invalidates trained HR/RR weights
+# Exposure and white balance are LOCKED while monitoring: a camera that keeps
+# re-adjusting brightness adds steps that rPPG reads as a pulse. In auto_lock mode
+# the camera meters the room once at startup, then the values are frozen for the run.
 
 d435:
   rgb:
@@ -17,9 +18,15 @@ d435:
     width: 848
     height: 480
     fps: 90
-  locked_exposure: 156         # NEVER change — baked into HR/RR weight training
-  locked_white_balance: 4600   # NEVER change — baked into HR/RR weight training
-  auto_exposure: false
+  # exposure_mode:
+  #   auto_lock - meter the room for auto_lock_settle_s, then freeze exposure/gain/WB (default)
+  #   fixed     - always use locked_exposure / locked_gain / locked_white_balance below
+  exposure_mode: auto_lock
+  auto_lock_settle_s: 2.5
+  locked_exposure: 156         # fixed mode only; units of 0.1 ms
+  locked_gain: 64              # fixed mode only
+  locked_white_balance: 4600   # fixed mode only; kelvin
+  auto_exposure: false         # never left on while monitoring
   auto_white_balance: false
   mount_distance_m: 1.6        # 1.5–2.0 m from subject, chest-to-face height
   tilt_deg: 15                 # 10–30 degrees downward

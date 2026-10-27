@@ -69,11 +69,12 @@ class SessionRecorder:
                      "sources": list(self.sources)}
         self._write_meta()
 
-        self._est_f = open(self.dir / "estimates.csv", "w", newline="")
+        # explicit utf-8: a free-text note (e.g. "≈15") must not fail on a cp1252 locale
+        self._est_f = open(self.dir / "estimates.csv", "w", newline="", encoding="utf-8")
         self._est = csv.writer(self._est_f)
         self._est.writerow(["t", "rr", "hr", "ews", "pain"]
                            + [c for s in self.sources for c in (s, f"{s}_sqi", f"{s}_unfiltered")])
-        self._ref_f = open(self.dir / "references.csv", "w", newline="")
+        self._ref_f = open(self.dir / "references.csv", "w", newline="", encoding="utf-8")
         self._ref = csv.writer(self._ref_f)
         self._ref.writerow(["t", "rr", "hr", "note"])
         ref = reference or {}
@@ -106,6 +107,8 @@ class SessionRecorder:
             raise ValueError("Give at least one reference value (rr or hr).")
         t = time.time() if t is None else float(t)
         with self._lock:
+            if self._ref_f.closed:
+                raise RuntimeError("This session has already been stopped.")
             self._ref.writerow([repr(t), _num(rr), _num(hr), note.replace("\n", " ")[:200]])
             self._ref_f.flush()
             if rr is not None:

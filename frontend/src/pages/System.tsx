@@ -15,7 +15,7 @@ function ModelFiles() {
   useEffect(() => { api.models().then(setM).catch((e: Error) => setErr(e.message)); }, []);
   return (
     <section className="card card-pad flex flex-col gap-3" aria-labelledby="models-h">
-      <SectionHead id="models-h" eyebrow="models/" title="Weight files">
+      <SectionHead id="models-h" title="Weight files">
         {m && (m.missing_required.length
           ? <Chip tone="amber">{m.missing_required.length} required missing</Chip>
           : <Chip tone="ok" icon={<CircleCheck />}>Required files present</Chip>)}
@@ -52,7 +52,6 @@ export default function System() {
   return (
     <div className="flex flex-col gap-6">
       <header className="flex flex-col gap-2">
-        <span className="t-eyebrow text-mute">System</span>
         <h1 className="t-display">{!h ? 'Checking the system' : h.status === 'ok' ? 'All systems running.' : 'Running with gaps.'}</h1>
         {h && <p className="t-body text-ink2">Version {h.version} · {h.mode === 'demo' ? 'demo mode with simulated beds' : 'camera mode'} · up {duration(h.uptime_s)}</p>}
         {error && <p className="t-body text-red">{error}</p>}
@@ -63,7 +62,7 @@ export default function System() {
       <div className="grid gap-5 lg:grid-cols-2">
         {h?.patients.map((p) => (
           <section key={p.patient_id} className="card card-pad flex flex-col gap-3">
-            <SectionHead eyebrow="Pipeline" title={p.patient_id}>
+            <SectionHead title={p.patient_id}>
               <Chip tone={p.status === 'running' ? 'neutral' : 'amber'}>{STATUS_TEXT[p.status]}</Chip>
               <Link className="btn btn-ghost btn-sm" to={`/patients/${encodeURIComponent(p.patient_id)}`}>Open</Link>
             </SectionHead>
@@ -75,7 +74,7 @@ export default function System() {
       </div>
 
       <section className="card card-pad flex flex-col gap-3 max-w-[90ch]">
-        <SectionHead eyebrow="Reference" title="Running VisionICU" />
+        <SectionHead title="Running VisionICU" />
         <dl className="grid gap-x-6 gap-y-2 sm:grid-cols-[auto,1fr] t-label">
           <dt className="text-ink2">With the camera</dt><dd><code>python main.py</code></dd>
           <dt className="text-ink2">Without hardware</dt><dd><code>python main.py --demo</code></dd>

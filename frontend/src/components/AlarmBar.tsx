@@ -3,8 +3,9 @@
 // Shows every active, unacknowledged alarm across beds, red first. Escalation follows the
 // server's alarm FSM (log -> dashboard -> chime -> phone): the band pulses from
 // "dashboard_highlight", a tone plays from "chime" when sound is on. Alarms logged while
-// staff are at the bedside are shown without sound.
-import { BellOff, OctagonAlert, TriangleAlert } from 'lucide-react';
+// staff are at the bedside are shown without sound. Red alarms are always shown in full;
+// past two rows the remaining orange ones fold behind a count so the page stays usable.
+import { BellOff, ChevronDown, OctagonAlert, TriangleAlert } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../lib/api';
@@ -17,6 +18,7 @@ const STAGE_RANK: Record<string, number> = { log_only: 0, dashboard_highlight: 1
 export default function AlarmBar({ ward, soundOn }: { ward: PatientSummary[] | null; soundOn: boolean }) {
   const [busy, setBusy] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [expanded, setExpanded] = useState(false);
   const sounded = useRef<Map<number, number>>(new Map());
 
   const rows = (ward ?? [])
@@ -39,6 +41,10 @@ export default function AlarmBar({ ward, soundOn }: { ward: PatientSummary[] | n
 
   if (rows.length === 0) return null;
   const now = Date.now() / 1000;
+  const reds = rows.filter((r) => r.alarm.severity === 'red').length;
+  const keep = Math.max(reds, 2);
+  const folded = expanded ? 0 : Math.max(rows.length - keep, 0);
+  const shown = folded ? rows.slice(0, keep) : rows;
 
   const ack = async (pid: string, id: number) => {
     setBusy(id);
@@ -48,7 +54,7 @@ export default function AlarmBar({ ward, soundOn }: { ward: PatientSummary[] | n
 
   return (
     <section aria-label="Active alarms" role="alert" className="px-4 sm:px-6 pt-3 flex flex-col gap-2">
-      {rows.map(({ patient, alarm }) => {
+      {shown.map(({ patient, alarm }) => {
         const red = alarm.severity === 'red';
         const Icon = red ? OctagonAlert : TriangleAlert;
         const pulsing = (STAGE_RANK[alarm.action] ?? 0) >= 1 && !alarm.suppressed;
@@ -84,6 +90,13 @@ export default function AlarmBar({ ward, soundOn }: { ward: PatientSummary[] | n
           </div>
         );
       })}
+      {(folded > 0 || (expanded && rows.length > keep)) && (
+        <button type="button" onClick={() => setExpanded(!expanded)} aria-expanded={expanded}
+                className="self-start inline-flex items-center gap-2 rounded-lg border band-amber px-3 min-h-[36px] t-label">
+          <ChevronDown className={`h-4 w-4 transition-transform duration-200 ${expanded ? 'rotate-180' : ''}`} aria-hidden />
+          {expanded ? 'Show fewer' : ` more orange `}
+        </button>
+      )}
       {error && <p className="t-label text-red">Could not acknowledge: {error}</p>}
     </section>
   );

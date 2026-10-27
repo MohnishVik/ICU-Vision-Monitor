@@ -33,7 +33,7 @@ def _f(x: str) -> Optional[float]:
         return None
     try:
         v = float(x)
-    except ValueError:
+    except (TypeError, ValueError):
         return None
     return v if math.isfinite(v) else None
 
@@ -41,12 +41,18 @@ def _f(x: str) -> Optional[float]:
 def load_session(path: str | Path) -> dict:
     d = Path(path)
     meta = json.loads((d / "meta.json").read_text())
-    with open(d / "estimates.csv", newline="") as f:
-        rows = [{k: (_f(v) if k != "t" else float(v)) for k, v in r.items()} for r in csv.DictReader(f)]
+    # utf-8 as written by SessionRecorder; "replace" keeps older locale-encoded notes readable.
+    # A malformed row (no usable time) is skipped instead of failing the whole report.
+    with open(d / "estimates.csv", newline="", encoding="utf-8", errors="replace") as f:
+        rows = [{k: _f(v) for k, v in r.items()} for r in csv.DictReader(f)]
+    rows = [r for r in rows if r.get("t") is not None]
     refs: List[dict] = []
-    with open(d / "references.csv", newline="") as f:
+    with open(d / "references.csv", newline="", encoding="utf-8", errors="replace") as f:
         for r in csv.DictReader(f):
-            refs.append({"t": float(r["t"]), "rr": _f(r["rr"]), "hr": _f(r["hr"]), "note": r.get("note", "")})
+            t = _f(r.get("t"))
+            if t is not None:
+                refs.append({"t": t, "rr": _f(r.get("rr")), "hr": _f(r.get("hr")),
+                             "note": r.get("note") or ""})
     refs.sort(key=lambda r: r["t"])
     return {"meta": meta, "rows": rows, "refs": refs, "path": str(d)}
 

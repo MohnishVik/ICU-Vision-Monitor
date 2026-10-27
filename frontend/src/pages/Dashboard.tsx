@@ -43,7 +43,6 @@ export default function Dashboard() {
   return (
     <div className="flex flex-col gap-6">
       <header className="flex flex-col gap-2">
-        <span className="t-eyebrow text-mute">Ward overview</span>
         <h1 className={`t-display max-w-[26ch] ${h.tone === 'red' ? 'text-red' : h.tone === 'amber' ? 'text-amber' : ''}`}>
           {h.text}
         </h1>

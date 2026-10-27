@@ -131,6 +131,7 @@ class PatientSource:
         self._thermal_roi_src = "warmest_patch"
         self._breath: deque = deque(maxlen=600)
         self._snapshots: "OrderedDict[str, dict]" = OrderedDict()
+        self._session_lock = threading.Lock()   # API requests run concurrently (double-click)
 
     # recording sessions (numbers only; see src/serving/session_log.py)
     def session_status(self) -> dict:
@@ -140,13 +141,14 @@ class PatientSource:
     def start_session(self, label: str, condition: str = "", reference: Optional[dict] = None,
                       notes: str = "") -> dict:
         from src.serving.session_log import SessionRecorder, sessions_root
-        if self.pipeline.recorder is not None:
-            raise RuntimeError("A session is already being recorded on this bed - stop it first.")
-        rec = SessionRecorder(sessions_root(), patient_id=self.patient_id, label=label,
-                              condition=condition, sources=self.pipeline.ALL_SOURCES,
-                              reference=reference, notes=notes, simulated=self.pipeline.simulated,
-                              fuse_learned=self.pipeline.learned_fused, mode=self.mode)
-        self.pipeline.recorder = rec
+        with self._session_lock:
+            if self.pipeline.recorder is not None:
+                raise RuntimeError("A session is already being recorded on this bed - stop it first.")
+            rec = SessionRecorder(sessions_root(), patient_id=self.patient_id, label=label,
+                                  condition=condition, sources=self.pipeline.ALL_SOURCES,
+                                  reference=reference, notes=notes, simulated=self.pipeline.simulated,
+                                  fuse_learned=self.pipeline.learned_fused, mode=self.mode)
+            self.pipeline.recorder = rec
         return rec.status()
 
     def add_session_reference(self, rr: Optional[float], hr: Optional[float], note: str = "") -> dict:
@@ -156,7 +158,8 @@ class PatientSource:
         return rec.add_reference(rr=rr, hr=hr, note=note)
 
     def stop_session(self) -> dict:
-        rec, self.pipeline.recorder = self.pipeline.recorder, None
+        with self._session_lock:
+            rec, self.pipeline.recorder = self.pipeline.recorder, None
         if rec is None:
             raise RuntimeError("No session is being recorded on this bed.")
         return rec.stop()

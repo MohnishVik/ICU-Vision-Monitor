@@ -1,3 +1,5 @@
+<p align="center"><img src="docs/logo.jpg" alt="ICU Vision Monitor logo" width="260"></p>
+
 # VisionICU
 
 [![VisionICU CI](https://github.com/MohnishVik/ICU-Vision-Monitor/actions/workflows/ci.yml/badge.svg)](https://github.com/MohnishVik/ICU-Vision-Monitor/actions/workflows/ci.yml)
@@ -13,7 +15,8 @@ respiratory-cardiac early-warning score that explains itself, fall detection, br
 synchrony, and escalating alarms. A built-in record-and-compare workflow scores every
 estimator, including the experimental learned models, against reference values you trust.
 
-> **Research prototype.** 
+> **Research prototype, not a certified medical device.** It does not replace a bedside monitor
+> or clinical judgement.
 
 ---
 
@@ -130,9 +133,30 @@ flowchart LR
 
 | Device | Settings used | Notes |
 |---|---|---|
-| Intel RealSense D435 | RGB 640×480 @ 30 fps (bgr8), depth 424×240 @ 30 fps aligned to RGB, exposure 156, white balance 4600 | Mount 1.5–2.0 m from the patient at chest-to-face height, tilted 10–30° down |
+| Intel RealSense D435 | RGB 640×480 @ 30 fps (bgr8), depth 424×240 @ 30 fps aligned to RGB, exposure / gain / white balance metered once at startup and then locked ([below](#camera-exposure)) | Mount 1.5–2.0 m from the patient at chest-to-face height, tilted 10–30° down |
 | Waveshare ESP32-S3 thermal camera | 62×80 px, int16 centi-°C over HTTP at `http://192.168.4.1/thermal/frame` | Join its Wi-Fi access point; the endpoint is auto-discovered |
 | NVIDIA Jetson Orin Nano Super 8GB | JetPack, CUDA | Edge deployment target; a laptop works for development |
+
+### Camera exposure
+
+Exposure is how long the camera's shutter stays open for each frame. Too short and a well-lit room
+still looks dark; too long and movement smears. A camera on *auto* keeps nudging this up and down,
+and every nudge makes the whole picture slightly brighter or darker. The heart-rate method looks for
+a tiny, rhythmic change in skin colour, so it would read those nudges as heartbeats. That is why
+exposure is never left on auto while monitoring.
+
+`config/camera.yaml` → `d435.exposure_mode` picks how the fixed value is chosen:
+
+| Mode | What happens at startup | Use it when |
+|---|---|---|
+| `auto_lock` (default) | Auto-exposure and auto white balance run for `auto_lock_settle_s` (2.5 s) so the camera meters the room, then the values it settled on are read from the frame metadata, auto is switched off and those values are frozen for the whole run | Lighting differs between sessions (day, night, lamp on) |
+| `fixed` | `locked_exposure` (0.1 ms units), `locked_gain` and `locked_white_balance` are written directly | You need byte-identical settings across recordings |
+
+Exposure is capped at one frame period (33.3 ms at 30 fps) so the frame rate never drops, and
+`auto_exposure_priority` is turned off for the same reason. The locked values are printed at
+startup. The D435-trained respiratory model reads depth, which the colour exposure does not affect,
+and the heart-rate methods use relative colour change, so re-metering per session does not
+invalidate any weights. Start the monitor with the room lit the way it will be during the session.
 
 ---
 
@@ -179,11 +203,13 @@ What is known about each learned model, from its training notebook:
 
 ## Quick Start
 ```bash
-pip install -r requirements.txt
+pip install -r requirements.txt                    # every Python dependency, one file
 cd frontend && npm ci && npm run build && cd ..   # build the web dashboard once
-# Place weight files in models/public/ and models/finetuned/ (see README files there)
-python main.py                   # start monitor + dashboard -> http://127.0.0.1:8000
+python main.py                                     # monitor + dashboard -> http://127.0.0.1:8000
 ```
+
+The first page you see is the **home page**: what VisionICU measures, how a reading is made,
+the six setup steps and how to read the colours, next to a live list of the beds.
 
 No camera or weights yet? `python main.py --demo` runs four **simulated** beds (stable,
 deteriorating, fall, breathing problems), clearly labelled as simulated in the UI. The
@@ -224,7 +250,8 @@ Open **http://127.0.0.1:8000**. For the real cameras, add the model files below 
 
 ## Model files
 
-Weight files are git-ignored: copy them in by hand. Rename the training outputs to these names.
+The weight files below are included in `models/`. If you retrain one, rename the training output
+to the name shown so the monitor finds it.
 
 ```
 models/
@@ -248,7 +275,7 @@ models/
 - `python main.py` prints this list with `ok` / `MISSING` / `absent` at startup, and the
   **System** page shows it as a table. Paths can be changed in `config/signal.yaml`
   (`fall.*`, `pain.weights`, `learned.*.weights`).
-- The app does not download any weights. Never commit them.
+- The app does not download any weights.
 
 ---
 
@@ -289,7 +316,11 @@ Other `main.py` options: `--port` (default 8000), `--patient-id` (default `bed-1
 ---
 
 ## Web dashboard
-- **Ward view:** one monitor strip per bed (HR and RR with 30-min sparklines, early warning,
+- **Home (`/`):** the ICU Vision Monitor emblem, a plain-language explanation of every
+  measurement, the five pipeline stages, the setup steps, a colour legend, and a live list of
+  every bed with its heart and breathing rate. A first-time visitor can use the system from this
+  page alone.
+- **Ward view (`/ward`):** one monitor strip per bed (HR and RR with 30-min sparklines, early warning,
   pain), quiet when stable and loud only on deviation. Fixed bed order.
 - **Bed view:** live face-blurred video with pose/chair overlay, HR and RR with signal quality,
   early-warning sub-score with a plain-language explanation ("RR 16→26 over 40 min"),
@@ -316,8 +347,12 @@ Other `main.py` options: `--port` (default 8000), `--patient-id` (default `bed-1
 - **Alarm sound:** browsers block audio until you allow it — click **Turn on alarm sound** once.
 - **Design:** "Graphite & Bone": warm graphite neutrals with no blue, dark (night ward) and
   light themes, HR green / RR yellow as on bedside monitors, orange/red only for deviation and
-  always with an icon and words. Atkinson Hyperlegible + IBM Plex Sans Condensed, bundled (works
-  offline). Keyboard accessible, reduced-motion aware, phone-sized layouts.
+  always with an icon and words. The logo is drawn in a single sand (dark) or umber (light)
+  colour from an alpha mask, so it follows the theme. Atkinson Hyperlegible + IBM Plex Sans
+  Condensed, bundled (works offline). Views settle in with a short ease-out on navigation; all
+  motion stops under `prefers-reduced-motion`. When more than two alarms are open, extra orange
+  ones fold behind a count; red alarms are always shown in full. Keyboard accessible, phone-sized
+  layouts.
 
 ---
 
@@ -403,7 +438,7 @@ The score follows NEWS2 bands for the two parameters the camera measures (`confi
 
 | File | Purpose |
 |---|---|
-| `config/camera.yaml` | D435 streams, **locked exposure and white balance**, thermal camera address, sync tolerance, optional thermal `homography_matrix` |
+| `config/camera.yaml` | D435 streams, **exposure mode** (`auto_lock` or `fixed`, see [Camera exposure](#camera-exposure)), thermal camera address, sync tolerance, optional thermal `homography_matrix` |
 | `config/signal.yaml` | Signal-processing windows, frequency bands, quality gates, apnoea and TAA thresholds, fall-detector parameters, `pain` (weights, threshold, window), `learned` (weights, `fuse` switch), optional `privacy` and `scene` blocks |
 | `config/ews_rules.yaml` | Early-warning bands, levels, alarm dwell, staff suppression, escalation stages |
 | `config/models.yaml` | Pose weights, module toggles, inference `device` (`cuda` on Jetson, `cpu` for laptop dev; pose falls back to CPU automatically when CUDA is unavailable), `use_onnx` |
@@ -499,8 +534,9 @@ ICU-Vision-Monitor/
 ## Testing and CI
 
 ```bash
-pip install -r requirements-dev.txt
-pytest
+pip install -r requirements.txt     # includes pytest and httpx
+python -m pytest                    # from the project root
+cd frontend && npm run build        # strict TypeScript check + production build
 ```
 
 The suite covers EWS scoring, fusion, Kalman, trends and alarms; the web API in demo mode and
@@ -558,6 +594,8 @@ bash deploy/setup_jetson.sh          # swap, max performance mode, dependencies 
 | Port 8000 already in use | `python main.py --port 8080` |
 | No alarm sound | Click **Turn on alarm sound** in the top bar once per browser session |
 | Pose is slow on a laptop | Expected on CPU; it uses CUDA automatically when available |
+| Colour picture too dark or too bright | Keep `exposure_mode: auto_lock` and restart the monitor with the room lit as it will be; the startup log prints the locked exposure. If a lamp is switched on or off mid-session, restart |
+| Colour flickers under mains lighting | Set `exposure_mode: fixed` with `locked_exposure` at a multiple of 100 (10 ms) on 50 Hz mains, or 83 (8.3 ms) on 60 Hz |
 
 ---
 
@@ -587,7 +625,8 @@ bash deploy/setup_jetson.sh          # swap, max performance mode, dependencies 
 ---
 
 ## Constraint Notes
-- Auto-exposure is locked in `config/camera.yaml`. Never change exposure/WB values.
+- Auto-exposure is never left running while monitoring: `auto_lock` meters once at startup and
+  freezes the values; `fixed` uses the configured ones. See [Camera exposure](#camera-exposure).
 - Thermal was NOT used in RR training. TCN input is 2-channel [flow, depth] only.
 - All subject video weights are locked. Do not retrain.
 - Always report MAE + coverage together. Never bare MAE.

@@ -447,25 +447,32 @@ class _HybridGate:
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _load_gru(primary: Path, fallback: Path, device: torch.device) -> Tuple[FallGRUClassifier, Dict]:
-    """Load primary weights; fall back if missing. Returns (model, info)."""
+    """Load primary weights; fall back if missing or unreadable. Returns (model, info)."""
+    failures = []
     for path, tag in ((primary, "primary"), (fallback, "fallback")):
         if path.exists():
             try:
-                ck = torch.load(path, map_location=device)
-            except Exception:
-                # torch >= 2.6 defaults to weights_only=True, which rejects checkpoints that
-                # carry non-tensor objects (numpy scalars, config objects). These are our own
-                # locally trained weights, so loading the full pickle is acceptable here.
-                ck = torch.load(path, map_location=device, weights_only=False)
-            cfg = ck.get("model_config", {})
-            model = FallGRUClassifier(
-                input_size=cfg.get("input_size", 62),
-                hidden_size=cfg.get("hidden_size", ck.get("hidden_size", 128)),
-                num_layers=cfg.get("num_layers",  ck.get("num_layers", 2)),
-                dropout=cfg.get("dropout", ck.get("dropout", 0.2)),
-            ).to(device).eval()
-            model.load_state_dict(ck["model_state_dict"])
+                try:
+                    ck = torch.load(path, map_location=device)
+                except Exception:
+                    # torch >= 2.6 defaults to weights_only=True, which rejects checkpoints that
+                    # carry non-tensor objects (numpy scalars, config objects). These are our own
+                    # locally trained weights, so loading the full pickle is acceptable here.
+                    ck = torch.load(path, map_location=device, weights_only=False)
+                cfg = ck.get("model_config", {})
+                model = FallGRUClassifier(
+                    input_size=cfg.get("input_size", 62),
+                    hidden_size=cfg.get("hidden_size", ck.get("hidden_size", 128)),
+                    num_layers=cfg.get("num_layers",  ck.get("num_layers", 2)),
+                    dropout=cfg.get("dropout", ck.get("dropout", 0.2)),
+                ).to(device).eval()
+                model.load_state_dict(ck["model_state_dict"])
+            except Exception as exc:  # noqa: BLE001 - a corrupt primary must not hide the fallback
+                failures.append(f"{path}: {type(exc).__name__}: {(str(exc).splitlines() or [''])[0]}")
+                continue
             return model, {"path": str(path), "slot": tag}
+    if failures:
+        raise RuntimeError("Could not load GRU weights - " + "; ".join(failures))
     raise FileNotFoundError(f"No GRU weights at {primary} or {fallback}")
 
 

@@ -51,7 +51,6 @@ export default function SourcesPanel({ snap }: { snap: PatientSnapshot }) {
   return (
     <section className="card card-pad flex flex-col gap-3 min-w-0" aria-labelledby="src-h">
       <div className="flex flex-col gap-1">
-        <span className="t-eyebrow text-mute">Where the numbers come from</span>
         <h2 id="src-h" className="t-head">Estimators, side by side</h2>
         <p className="t-label text-ink2 max-w-[70ch]">
           Fused paths are blended by inverse-variance weighting; if they disagree, no number is shown.

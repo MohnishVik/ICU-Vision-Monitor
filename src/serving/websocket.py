@@ -63,6 +63,22 @@ def summarize(snap: dict) -> dict:
     }
 
 
+async def _until_closed(ws: WebSocket) -> None:
+    """Return once the client goes away (anything it sends is ignored). Lets a sender
+    that has nothing new to send still notice the disconnect instead of looping forever."""
+    try:
+        while (await ws.receive()).get("type") != "websocket.disconnect":
+            pass
+    except Exception:  # noqa: BLE001 - any receive failure means the socket is gone
+        return
+
+
+def _tick_key(snap: dict) -> tuple:
+    """Changes when the snapshot does, including when a frozen snapshot is aged to stale."""
+    vit = snap.get("vitals") or {}
+    return (snap.get("version"),) + tuple(bool((vit.get(k) or {}).get("stale")) for k in ("rr", "hr"))
+
+
 def build_ws_router(manager: "EngineManager") -> APIRouter:
     r = APIRouter()
 
@@ -74,15 +90,19 @@ def build_ws_router(manager: "EngineManager") -> APIRouter:
         await ws.accept()
         src = manager.get(patient_id)
         last = None
+        closed = asyncio.ensure_future(_until_closed(ws))
         try:
-            while True:
+            while not closed.done():
                 snap = src.snapshot()
-                if snap.get("version") != last:
-                    last = snap.get("version")
+                key = _tick_key(snap)
+                if key != last:
+                    last = key
                     await ws.send_json({"type": "tick", "data": snap})
                 await asyncio.sleep(TICK_PERIOD_S)
         except (WebSocketDisconnect, RuntimeError, ConnectionError, asyncio.CancelledError):
             return
+        finally:
+            closed.cancel()
 
     @r.websocket("/ws/ward")
     async def ward(ws: WebSocket) -> None:

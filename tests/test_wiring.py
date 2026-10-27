@@ -85,6 +85,22 @@ def test_history_carries_every_source_and_pain():
     assert h["pain"] == [0.3]
 
 
+def test_frozen_snapshot_ages_to_stale_when_steps_stop():
+    """Frames stall or calibration is cleared: step() stops, the last values must not stay live."""
+    p = _pipeline()
+    t0 = time.time()
+    for k in range(3):
+        p.step(t0 - 20 + k, {"rr.depth": _m("rr.depth", 15.0), "hr.pos": _m("hr.pos", 72.0)}, _scene())
+    s = p.snapshot()
+    for key in ("rr", "hr"):
+        assert s["vitals"][key]["value"] is None and s["vitals"][key]["stale"] is True
+        assert s["vitals"][key]["sources"] == {} and s["vitals"][key]["age_s"] > 5
+    assert s["ews"]["total"] is None and s["ews"]["level"] == "unknown"
+    json.dumps(s, allow_nan=False)
+    p.step(time.time(), {"rr.depth": _m("rr.depth", 15.0)}, _scene())      # fresh again
+    assert p.snapshot()["vitals"]["rr"]["stale"] is False
+
+
 def test_model_check_lists_every_expected_file(tmp_path):
     (tmp_path / "models" / "public").mkdir(parents=True)
     (tmp_path / "models" / "public" / "yolov8n-pose.pt").write_bytes(b"x" * 10)

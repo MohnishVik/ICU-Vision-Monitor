@@ -59,15 +59,12 @@ export function Quality({ sqi, label = 'Signal', compact = false }: {
   );
 }
 
-export function SectionHead({ id, eyebrow, title, children }: {
-  id?: string; eyebrow?: string; title: string; children?: ReactNode;
+export function SectionHead({ id, title, children }: {
+  id?: string; title: string; children?: ReactNode;
 }) {
   return (
     <div className="flex flex-wrap items-end gap-x-3 gap-y-2">
-      <div className="flex flex-col gap-1 min-w-0">
-        {eyebrow && <span className="t-eyebrow text-mute">{eyebrow}</span>}
-        <h2 id={id} className="t-head text-ink">{title}</h2>
-      </div>
+      <h2 id={id} className="t-head text-ink min-w-0">{title}</h2>
       {children && <div className="ml-auto flex flex-wrap items-center gap-2">{children}</div>}
     </div>
   );

@@ -22,6 +22,7 @@ export default {
         red: 'var(--red)',
         redink: 'var(--red-ink)',
         ok: 'var(--ok)',
+        brand: 'var(--brand)',
       },
       fontFamily: {
         sans: ['"Atkinson Hyperlegible"', 'system-ui', 'sans-serif'],

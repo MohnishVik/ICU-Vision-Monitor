@@ -1,11 +1,12 @@
 // AppShell.tsx — side rail (desktop) / top bar (narrow), ward-wide alarm bar, page frame.
-import { Activity, LayoutGrid, Moon, Server, Sun, TestTubeDiagonal, Volume2, VolumeX } from 'lucide-react';
+import { Activity, House, LayoutGrid, Moon, Server, Sun, TestTubeDiagonal, Volume2, VolumeX } from 'lucide-react';
 import { useEffect, useState, type ReactNode } from 'react';
 import { NavLink } from 'react-router-dom';
 import { useWard } from '../context/WardContext';
 import { enableSound } from '../lib/sound';
 import { useTheme } from '../lib/theme';
 import AlarmBar from './AlarmBar';
+import Logo from './Logo';
 import { Chip } from './ui';
 
 function useClock() {
@@ -18,20 +19,12 @@ function useClock() {
 }
 
 const NAV = [
-  { to: '/', label: 'Ward', icon: LayoutGrid, end: true },
+  { to: '/', label: 'Home', icon: House, end: true },
+  { to: '/ward', label: 'Ward', icon: LayoutGrid, end: false },
   { to: '/compare', label: 'Record & compare', short: 'Compare', icon: TestTubeDiagonal, end: false },
   { to: '/system', label: 'System', icon: Server, end: false },
 ];
 
-function Mark() {
-  return (
-    <svg viewBox="0 0 32 32" className="h-8 w-8 shrink-0" aria-hidden>
-      <rect width="32" height="32" rx="8" fill="var(--ink)" />
-      <path d="M5 17h5l2.4-6 4.2 12 3-9 1.6 3H27" fill="none" stroke="var(--bg)" strokeWidth="2.4"
-            strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
-  );
-}
 
 export default function AppShell({ children }: { children: ReactNode }) {
   const { ward, link } = useWard();
@@ -43,9 +36,9 @@ export default function AppShell({ children }: { children: ReactNode }) {
 
   const railLink = ({ isActive }: { isActive: boolean }) =>
     `group flex flex-col items-center gap-1 w-full rounded-lg py-2.5 transition-colors ${
-      isActive ? 'bg-surface2 text-ink' : 'text-mute hover:text-ink hover:bg-surface2/60'}`;
+      isActive ? 'bg-surface2 text-ink' : 'text-mute hover:text-ink hover:bg-[color-mix(in_srgb,var(--surface-2)_60%,transparent)]'}`;
   const topLink = ({ isActive }: { isActive: boolean }) =>
-    `inline-flex items-center gap-2 min-h-[40px] px-3 rounded-lg t-label ${
+    `inline-flex flex-col sm:flex-row items-center justify-center gap-1 sm:gap-2 min-h-[48px] sm:min-h-[40px] px-2 sm:px-3 rounded-lg text-[13px] sm:text-[14px] transition-colors ${
       isActive ? 'bg-surface2 text-ink' : 'text-ink2 hover:text-ink'}`;
 
   return (
@@ -56,7 +49,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
 
       {/* rail: desktop */}
       <aside className="hidden lg:flex sticky top-0 h-screen w-[88px] shrink-0 flex-col items-center gap-2 py-4 px-2 bg-surface rule-r border-r border-line">
-        <NavLink to="/" aria-label="VisionICU, ward view" className="mb-3"><Mark /></NavLink>
+        <NavLink to="/" aria-label="VisionICU home" className="mb-3 mt-1 rounded-md"><Logo height={44} label={null} /></NavLink>
         <nav aria-label="Main" className="flex flex-col gap-1 w-full">
           {NAV.map(({ to, label, short, icon: Icon, end }) => (
             <NavLink key={to} to={to} end={end} className={railLink} title={label}>
@@ -80,13 +73,13 @@ export default function AppShell({ children }: { children: ReactNode }) {
       </aside>
 
       <div className="flex-1 min-w-0 flex flex-col">
-        <header className="sticky top-0 z-20 bg-bg/95 backdrop-blur rule-b">
+        <header className="sm:sticky sm:top-0 z-20 bg-[color-mix(in_srgb,var(--bg)_90%,transparent)] sm:backdrop-blur-md rule-b">
           <div className="flex flex-wrap items-center gap-x-4 gap-y-2 px-4 sm:px-6 py-2.5">
-            <NavLink to="/" className="lg:hidden flex items-center gap-2" aria-label="VisionICU ward view">
-              <Mark />
+            <NavLink to="/" className="flex items-center gap-2.5 rounded-md" aria-label="VisionICU home">
+              <Logo height={26} label={null} className="lg:hidden" />
+              <span className="font-cond font-semibold text-[20px] tracking-[-0.01em]">VisionICU</span>
             </NavLink>
-            <span className="font-cond font-semibold text-[20px] tracking-[-0.01em]">VisionICU</span>
-            <nav aria-label="Main" className="lg:hidden flex items-center gap-1 order-last w-full sm:order-none sm:w-auto">
+            <nav aria-label="Main" className="lg:hidden grid grid-cols-4 gap-1 order-last w-full sm:flex sm:items-center sm:order-none sm:w-auto">
               {NAV.map(({ to, label, short, icon: Icon, end }) => (
                 <NavLink key={to} to={to} end={end} className={topLink}>
                   <Icon className="h-4 w-4" aria-hidden />{short ?? label}

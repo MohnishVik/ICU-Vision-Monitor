@@ -247,6 +247,7 @@ class VitalsPipeline:
             if rec is not None:
                 self._record(rec, now, rr_val, hr_val, ews.total, pain_m)
 
+        rec = self.recorder                  # read once: the API thread may stop it mid-step
         snap = {
             "patient_id": self.patient_id, "label": self.label, "mode": self.mode,
             "simulated": self.simulated, "ts": now, "status": self.status,
@@ -275,7 +276,7 @@ class VitalsPipeline:
                 "reason": to_jsonable(taa_m.meta.get("reason")) if taa_m is not None else None,
             },
             "pain": self._pain_dict(pain_m),
-            "session": self.recorder.status() if self.recorder is not None else None,
+            "session": rec.status() if rec is not None else None,
             "scene": to_jsonable(scene.__dict__),
             "alarms": [a.to_dict() for a in open_alarms],
             "alarm_history": [a.to_dict() for a in alarm_history],
@@ -350,7 +351,8 @@ class VitalsPipeline:
             try:
                 rec.stop()
             finally:
-                self.recorder = None
+                if self.recorder is rec:     # never drop a session started in the meantime
+                    self.recorder = None
 
     def _pain_dict(self, m: Optional[Measurement]) -> dict:
         """Pain is experimental: shown as a probability, never scored or alarmed on."""
@@ -371,8 +373,9 @@ class VitalsPipeline:
     # ---------------------------------------------------------------- reads --
     def snapshot(self) -> dict:
         with self._lock:
-            if self._snapshot:
-                return dict(self._snapshot)
+            snap = dict(self._snapshot) if self._snapshot else None
+        if snap is not None:
+            return self._age_out(snap, time.time())
         return to_jsonable({
             "patient_id": self.patient_id, "label": self.label, "mode": self.mode,
             "simulated": self.simulated, "ts": time.time(), "status": self.status,
@@ -381,6 +384,27 @@ class VitalsPipeline:
             "alarm_history": [], "trends": None, "modules": self.modules,
             "metrics": self.metrics, "version": self.version,
         })
+
+    def _age_out(self, snap: dict, now: float) -> dict:
+        """The snapshot is rebuilt only by step(). When steps stop (frames stall, or the
+        chair calibration was cleared), re-check staleness at read time so the last
+        values are never served as live readings. Same shape as a stale step()."""
+        vitals = snap.get("vitals")
+        ts = snap.get("ts")
+        if not isinstance(vitals, dict) or not isinstance(ts, (int, float)) or now - ts <= self.stale_s:
+            return snap
+        aged = {}
+        for key, v in vitals.items():
+            if not isinstance(v, dict):
+                aged[key] = v
+                continue
+            age = self.watch.age(key, now)
+            aged[key] = {**v, "value": None, "stale": True, "age_s": age, "subscore": None,
+                         "sources": {}, **({"apnea": False} if "apnea" in v else {})}
+        snap["vitals"] = aged
+        ews = self.scorer.score({k: None for k in aged})
+        snap["ews"] = to_jsonable({**ews.to_dict(), "explanation": explain({}, ews)})
+        return snap
 
     def touch_status(self, status: str, detail: str = "") -> None:
         """Update status without a full step (camera offline, awaiting calibration...)."""

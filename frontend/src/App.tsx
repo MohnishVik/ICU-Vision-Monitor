@@ -1,10 +1,11 @@
 import { Component, type ReactNode } from 'react';
-import { BrowserRouter, Link, Route, Routes } from 'react-router-dom';
+import { BrowserRouter, Link, Route, Routes, useLocation } from 'react-router-dom';
 import AppShell from './components/AppShell';
 import { WardProvider } from './context/WardContext';
 import Calibrate from './pages/Calibrate';
 import Compare from './pages/Compare';
 import Dashboard from './pages/Dashboard';
+import Home from './pages/Home';
 import PatientDetail from './pages/PatientDetail';
 import System from './pages/System';
 import ThermalAlign from './pages/ThermalAlign';
@@ -29,9 +30,15 @@ function NotFound() {
   return (
     <div className="py-16 flex flex-col gap-4">
       <p className="t-display">Page not found.</p>
-      <Link to="/" className="btn w-fit">Back to the ward</Link>
+      <Link to="/ward" className="btn w-fit">Back to the ward</Link>
     </div>
   );
+}
+
+/** Keyed on the path so each view settles in once when you navigate to it. */
+function Page({ children }: { children: ReactNode }) {
+  const { pathname } = useLocation();
+  return <div key={pathname} className="page-settle">{children}</div>;
 }
 
 export default function App() {
@@ -39,9 +46,11 @@ export default function App() {
     <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
       <WardProvider>
         <AppShell>
-          <ErrorBoundary>
+          <Page>
+            <ErrorBoundary>
             <Routes>
-              <Route path="/" element={<Dashboard />} />
+              <Route path="/" element={<Home />} />
+              <Route path="/ward" element={<Dashboard />} />
               <Route path="/patients/:id" element={<PatientDetail />} />
               <Route path="/patients/:id/calibrate" element={<Calibrate />} />
               <Route path="/patients/:id/thermal" element={<ThermalAlign />} />
@@ -49,7 +58,8 @@ export default function App() {
               <Route path="/system" element={<System />} />
               <Route path="*" element={<NotFound />} />
             </Routes>
-          </ErrorBoundary>
+            </ErrorBoundary>
+          </Page>
         </AppShell>
       </WardProvider>
     </BrowserRouter>

@@ -276,6 +276,9 @@ class TAAModule:
         c_amp = _amplitude(c_sig)
         a_amp = _amplitude(a_sig)
         if c_amp < self.cfg.min_amplitude_units or a_amp < self.cfg.min_amplitude_units:
+            # Not measurable: the asynchrony streak is broken, so a later high reading
+            # must sustain for the full window again rather than resume the old count.
+            self._sustain = _SustainState()
             # Return a Measurement with value=None so the UI can show "insufficient signal"
             # instead of a confident 0 radians.
             return Measurement(

@@ -33,13 +33,13 @@ export default function BedStrip({ p }: { p: PatientSummary }) {
   const hist = useBedHistory(p.patient_id, running);
   const level = p.ews.level;
   const edge = alarm ? (red ? 'var(--red)' : 'var(--amber)')
-    : level === 'red' ? 'var(--red-line)' : level === 'amber' ? 'var(--amber-line)' : 'var(--line)';
+    : level === 'red' ? 'var(--red-line)' : level === 'amber' ? 'var(--amber-line)' : undefined;
   const href = `/patients/${encodeURIComponent(p.patient_id)}`;
 
   return (
     <Link to={href}
-          className={`group card relative block overflow-hidden transition-colors hover:bg-surface2 ${alarm && !alarm.suppressed ? 'alarm-pulse' : ''}`}
-          style={{ borderLeft: `4px solid ${edge}`,
+          className={`group card relative block overflow-hidden transition-[background-color,border-color] duration-200 hover:bg-surface2 hover:border-linestrong ${alarm && !alarm.suppressed ? 'alarm-pulse' : ''}`}
+          style={{ borderColor: edge,
                    ['--pulse-color' as string]: red ? 'color-mix(in srgb, var(--red) 40%, transparent)'
                      : 'color-mix(in srgb, var(--amber) 35%, transparent)' }}
           aria-label={`${p.label}. ${alarm ? `Alarm: ${alarm.title}.` : ''} Open bed.`}>
@@ -114,7 +114,7 @@ export default function BedStrip({ p }: { p: PatientSummary }) {
         <div className="flex xl:flex-col items-center xl:items-end gap-3 col-span-2 xl:col-span-1">
           {running && p.pain?.available && p.pain.probability != null && (
             <div className="flex flex-col xl:items-end" title="Experimental pain-expression model; never alarms">
-              <span className="t-eyebrow text-mute">Pain expr. · exp.</span>
+              <span className="t-eyebrow text-mute">Pain · experimental</span>
               <span className="font-cond font-semibold text-[22px] tnum leading-tight">
                 {Math.round(p.pain.probability * 100)}%
               </span>

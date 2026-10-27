@@ -13,8 +13,8 @@ export default function PainPanel({ pain }: { pain: PainInfo | null | undefined 
     <section className="card card-pad flex flex-col gap-4" aria-labelledby="pain-h">
       <div className="flex items-start gap-3">
         <div className="flex flex-col gap-1">
-          <span className="t-eyebrow text-mute">Face · MobileNetV3</span>
           <h2 id="pain-h" className="t-head">Pain expression</h2>
+          <span className="t-micro text-mute">Face model, MobileNetV3</span>
         </div>
         <span className="ml-auto"><Experimental /></span>
       </div>

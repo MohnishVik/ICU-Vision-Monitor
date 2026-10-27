@@ -29,10 +29,20 @@ def test_recorder_writes_meta_estimates_and_references(tmp_path):
     d = tmp_path / info["id"]
     meta = json.loads((d / "meta.json").read_text())
     assert meta["label"] == "paced 15" and meta["ended"] is not None and meta["rows"] == 3
-    rows = list(csv.DictReader((d / "estimates.csv").open()))
+    rows = list(csv.DictReader((d / "estimates.csv").read_text(encoding="utf-8").splitlines()))
     assert len(rows) == 3 and rows[0]["rr.depth"] == "15.5" and rows[0]["rr.cnn_lbrd"] == ""
-    refs = list(csv.DictReader((d / "references.csv").open()))
+    refs = list(csv.DictReader((d / "references.csv").read_text(encoding="utf-8").splitlines()))
     assert [r["rr"] for r in refs] == ["15.0", "20.0"] and refs[1]["note"] == "switched metronome"
+
+
+def test_non_ascii_note_and_reference_after_stop(tmp_path):
+    rec = SessionRecorder(tmp_path, patient_id="bed-1", label="notes", sources=SRCS)
+    rec.add_reference(rr=15.0, note="counted ≈15 → metronome ✓")      # not in cp1252
+    info = rec.stop()
+    with pytest.raises(RuntimeError):
+        rec.add_reference(rr=16.0)
+    sess = load_session(tmp_path / info["id"])
+    assert sess["refs"][0]["note"] == "counted ≈15 → metronome ✓"
 
 
 def test_score_reports_mae_and_coverage_after_warmup_and_settling(tmp_path):

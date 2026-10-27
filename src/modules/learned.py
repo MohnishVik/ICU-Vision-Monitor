@@ -477,6 +477,12 @@ def load_learned_modules(signal_yaml_path: str = "config/signal.yaml"):
         ok[key] = Path(net.weights).exists()
         if not ok[key]:
             errors[key] = f"Weights not found: {net.weights}"
+            continue
+        try:        # an unreadable file (e.g. a git-lfs pointer) disables only its own path
+            _load(Resp1DCNN(), net.weights, torch.device("cpu"))
+        except Exception as exc:  # noqa: BLE001
+            ok[key] = False
+            errors[key] = f"Could not load {net.weights}: {type(exc).__name__}: {(str(exc).splitlines() or [''])[0]}"
     if ok["rr_lbrd"] or ok["rr_d435"]:
         try:
             mods["rr_learned"] = LearnedRRModule(cfg, use_lbrd=ok["rr_lbrd"], use_d435=ok["rr_d435"])

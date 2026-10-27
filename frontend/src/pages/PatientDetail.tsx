@@ -1,5 +1,5 @@
 // PatientDetail.tsx — one bed: live view, vitals, every estimator, trends, recording, status.
-import { ArrowLeft, Bell, Crosshair, History as HistoryIcon, Thermometer, ThermometerSnowflake } from 'lucide-react';
+import { ArrowLeft, Bell, Camera, Crosshair, History as HistoryIcon, Thermometer, ThermometerSnowflake } from 'lucide-react';
 import { useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import EWSIndicator from '../components/EWSIndicator';
@@ -52,7 +52,7 @@ function AlarmsPanel({ snap }: { snap: PatientSnapshot }) {
   );
   return (
     <section className="card card-pad flex flex-col gap-2" aria-labelledby="alarms-h">
-      <SectionHead id="alarms-h" eyebrow="This bed" title="Alarms">
+      <SectionHead id="alarms-h" title="Alarms">
         <span className="t-micro text-mute tnum">{snap.metrics?.actionable_alerts_shift ?? 0} sounded this shift (target ≤ 3)</span>
       </SectionHead>
       {open.length === 0 ? <p className="t-label text-ink2 inline-flex items-center gap-2"><Bell className="h-4 w-4" aria-hidden />No open alarms.</p>
@@ -81,7 +81,7 @@ export default function PatientDetail() {
   if (!snap) {
     return (
       <div className="py-16 flex flex-col gap-4">
-        <Link to="/" className="btn btn-ghost w-fit"><ArrowLeft className="h-4 w-4" aria-hidden />Ward</Link>
+        <Link to="/ward" className="btn btn-ghost w-fit"><ArrowLeft className="h-4 w-4" aria-hidden />Ward</Link>
         <p className="t-display text-ink2">{link === 'reconnecting' ? `Cannot reach ${id}` : 'Opening bed'}</p>
       </div>
     );
@@ -96,11 +96,8 @@ export default function PatientDetail() {
   return (
     <div className="flex flex-col gap-6">
       <header className="flex flex-wrap items-end gap-x-4 gap-y-3">
-        <Link to="/" className="btn btn-ghost px-2.5" aria-label="Back to ward"><ArrowLeft className="h-5 w-5" aria-hidden /></Link>
-        <div className="flex flex-col gap-1">
-          <span className="t-eyebrow text-mute">Bed · {snap.mode === 'demo' ? 'simulated' : 'D435 camera'}</span>
-          <h1 className="t-display">{snap.label}</h1>
-        </div>
+        <Link to="/ward" className="btn btn-ghost px-2.5" aria-label="Back to ward"><ArrowLeft className="h-5 w-5" aria-hidden /></Link>
+        <h1 className="t-display">{snap.label}</h1>
         <div className="flex flex-wrap gap-2 pb-1">
           <Chip tone={running ? 'neutral' : 'amber'}>{STATUS_TEXT[snap.status]}</Chip>
           {snap.mode === 'camera' && running && (
@@ -108,7 +105,7 @@ export default function PatientDetail() {
               {snap.scene?.thermal_online ? 'Thermal on' : 'Thermal off'}
             </Chip>
           )}
-          {snap.simulated && <Chip tone="sim">Simulated patient</Chip>}
+          {snap.simulated ? <Chip tone="sim">Simulated patient</Chip> : <Chip icon={<Camera />}>D435 camera</Chip>}
           {snap.session?.active && <Chip tone="red" icon={<span className="block h-2 w-2 rounded-full bg-red rec-dot" />}>Recording</Chip>}
           {link !== 'live' && <Chip tone="amber">Not live, reconnecting</Chip>}
         </div>
@@ -136,7 +133,7 @@ export default function PatientDetail() {
                           subscore={v?.rr.subscore ?? null} reason={reasonFor(v?.rr.reason)} apnea={v?.rr.apnea} ageS={v?.rr.age_s} />
           </section>
           <section className="card card-pad flex flex-col gap-3" aria-labelledby="ews-h">
-            <SectionHead id="ews-h" eyebrow="Respiratory + cardiac" title="Early warning" />
+            <SectionHead id="ews-h" title="Early warning" />
             <EWSIndicator ews={snap.ews} />
           </section>
         </div>
@@ -144,7 +141,7 @@ export default function PatientDetail() {
 
       <section className="flex flex-col gap-4" aria-labelledby="trends-h">
         <div className="flex flex-wrap items-end gap-3">
-          <div className="flex flex-col gap-1"><span className="t-eyebrow text-mute">History</span><h2 id="trends-h" className="t-title">Trends</h2></div>
+          <h2 id="trends-h" className="t-title">Trends</h2>
           <label className="ml-auto inline-flex items-center gap-2 t-label min-h-[40px] cursor-pointer">
             <input type="checkbox" className="h-4 w-4 accent-current" checked={showSources} onChange={(e) => setShowSources(e.target.checked)} />
             Overlay every estimator
@@ -164,7 +161,7 @@ export default function PatientDetail() {
       <div className="grid gap-5 xl:grid-cols-12">
         <div className="xl:col-span-7 min-w-0"><SourcesPanel snap={snap} /></div>
         <section className="xl:col-span-5 card card-pad flex flex-col gap-4" aria-labelledby="rec-h">
-          <SectionHead id="rec-h" eyebrow="Validation" title="Record a comparison session">
+          <SectionHead id="rec-h" title="Record a comparison session">
             <Link to="/compare" className="btn btn-ghost btn-sm">Results</Link>
           </SectionHead>
           <SessionControl patientId={snap.patient_id} compact />
@@ -180,7 +177,7 @@ export default function PatientDetail() {
       <div className="grid gap-5 lg:grid-cols-2">
         <AlarmsPanel snap={snap} />
         <section className="card card-pad flex flex-col gap-2" aria-labelledby="mods-h">
-          <SectionHead id="mods-h" eyebrow="This bed" title="Pipeline status" />
+          <SectionHead id="mods-h" title="Pipeline status" />
           <ModuleHealth modules={snap.modules} />
         </section>
       </div>

@@ -160,6 +160,16 @@ def test_loader_reports_each_missing_weight_by_path(tmp_path):
     assert "hr_learned" in mods          # the other paths still load
 
 
+def test_an_unreadable_weight_file_disables_only_its_own_path(tmp_path):
+    bad = tmp_path / "pointer.pth"
+    bad.write_text("version https://git-lfs.github.com/spec/v1\n")      # an un-pulled LFS pointer
+    cfg = tmp_path / "signal.yaml"
+    cfg.write_text(f"learned:\n  rr_lbrd:\n    weights: {bad.as_posix()}\n")
+    mods, errors = load_learned_modules(str(cfg))
+    assert "pointer.pth" in errors["rr_lbrd"]
+    assert mods["rr_learned"].sources == ("rr.cnn_d435",)
+
+
 def test_fuse_flag_defaults_off():
     assert LearnedConfig().fuse is False
 

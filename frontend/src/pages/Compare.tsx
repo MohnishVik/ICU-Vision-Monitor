@@ -44,7 +44,7 @@ function ScoreTable({ vital, scores }: { vital: VitalKey; scores: Record<string,
             const s = scores[n];
             const info = SOURCES[n];
             return (
-              <tr key={n} className={n.endsWith('.fused') ? 'bg-surface2/60' : ''}>
+              <tr key={n} className={n.endsWith('.fused') ? 'bg-surface2' : ''}>
                 <td>
                   <span className="inline-flex items-center gap-2">
                     <svg width="22" height="8" aria-hidden><line x1="1" y1="4" x2="21" y2="4" stroke={info?.color ?? 'var(--ink-2)'}
@@ -114,7 +114,6 @@ export default function Compare() {
   return (
     <div className="flex flex-col gap-6">
       <header className="flex flex-col gap-2">
-        <span className="t-eyebrow text-mute">Validation</span>
         <h1 className="t-display max-w-[28ch]">Record against a reference, then see which estimator holds up.</h1>
         <p className="t-body text-ink2 max-w-[80ch]">
           Every breathing and heart-rate source, including the experimental learned models, is logged once a second
@@ -125,7 +124,7 @@ export default function Compare() {
       <div className="grid gap-5 xl:grid-cols-12">
         <div className="xl:col-span-5 flex flex-col gap-5 min-w-0">
           <section className="card card-pad flex flex-col gap-4" aria-labelledby="rec-h">
-            <SectionHead id="rec-h" eyebrow="Step 1" title="Record">
+            <SectionHead id="rec-h" title="Record">
               <label className="inline-flex items-center"><span className="sr-only">Bed</span>
                 <select className="input w-auto" value={bed} onChange={(e) => setBed(e.target.value)} aria-label="Bed to record">
                   {(ward ?? []).map((p) => <option key={p.patient_id} value={p.patient_id}>{p.label}{p.simulated ? ' (simulated)' : ''}</option>)}
@@ -139,7 +138,7 @@ export default function Compare() {
 
         <div className="xl:col-span-7 flex flex-col gap-5 min-w-0">
           <section className="card card-pad flex flex-col gap-3" aria-labelledby="sess-h">
-            <SectionHead id="sess-h" eyebrow="Step 2" title="Sessions">
+            <SectionHead id="sess-h" title="Sessions">
               <button type="button" className="btn btn-ghost btn-sm" onClick={loadSessions}><RefreshCw className="h-4 w-4" aria-hidden />Refresh</button>
             </SectionHead>
             {!sessions ? <p className="t-label text-mute">Loading sessions…</p>
@@ -181,7 +180,7 @@ export default function Compare() {
       </div>
 
       <section className="card card-pad flex flex-col gap-4" aria-labelledby="rep-h" aria-busy={!!sel && !report}>
-            <SectionHead id="rep-h" eyebrow="Step 3" title={selMeta ? `Results · ${selMeta.label}` : 'Results'}>
+            <SectionHead id="rep-h" title={selMeta ? `Results · ${selMeta.label}` : 'Results'}>
               <label className="inline-flex items-center gap-2 t-label text-ink2 whitespace-nowrap" title="Seconds skipped at the start (windows filling)">Skip first
                 <input className="input w-[72px] tnum" type="number" min={0} max={600} value={warmup}
                        onChange={(e) => setWarmup(Math.max(0, Number(e.target.value) || 0))} />s</label>
@@ -204,7 +203,7 @@ export default function Compare() {
       <div className="grid gap-5 xl:grid-cols-12">
         <div className="xl:col-span-7">
           <section className="card card-pad flex flex-col gap-3" aria-labelledby="proto-h">
-            <SectionHead id="proto-h" eyebrow="How to" title="A good validation run" />
+            <SectionHead id="proto-h" title="A good validation run" />
             <ol className="flex flex-col gap-2.5 t-label text-ink2 list-decimal pl-5 marker:text-mute">
               <li><span className="text-ink t-strong">Breathing:</span> pace to a metronome app (6, 10, 15, 20, 30 br/min), 2 min each.
                 Start with the first rate as the reference, then log each change as you switch.</li>
