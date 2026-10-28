@@ -1,0 +1,11 @@
+{
+  "session_id": "bed01_ir_only_dark_ir_only",
+  "bed": "bed01",
+  "subject_id": "sub05",
+  "condition": "dark_ir_only",
+  "lighting": "bright",
+  "duration_s": 30,
+  "exposure": 156,
+  "white_balance": 4600,
+  "created_at": "ir-- on:ly:"
+}

@@ -1,0 +1,11 @@
+{
+  "session_id": "bed01_20260827_154745_breathhold",
+  "bed": "bed01",
+  "subject_id": "sub03",
+  "condition": "breathhold",
+  "lighting": "bright",
+  "duration_s": 30,
+  "exposure": 156,
+  "white_balance": 4600,
+  "created_at": "2026-08-27 15:47:45"
+}

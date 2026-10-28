@@ -1,0 +1,11 @@
+{
+  "session_id": "bed01_light_20260826_dim_light",
+  "bed": "bed01",
+  "subject_id": "sub01",
+  "condition": "dim_light",
+  "lighting": "bright",
+  "duration_s": 30,
+  "exposure": 156,
+  "white_balance": 4600,
+  "created_at": "ligh-t- 20:26:08"
+}
