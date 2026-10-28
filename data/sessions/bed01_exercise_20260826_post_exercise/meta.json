@@ -1,0 +1,11 @@
+{
+  "session_id": "bed01_exercise_20260826_post_exercise",
+  "bed": "bed01",
+  "subject_id": "sub01",
+  "condition": "post_exercise",
+  "lighting": "bright",
+  "duration_s": 30,
+  "exposure": 156,
+  "white_balance": 4600,
+  "created_at": "exer-ci-se 20:26:08"
+}

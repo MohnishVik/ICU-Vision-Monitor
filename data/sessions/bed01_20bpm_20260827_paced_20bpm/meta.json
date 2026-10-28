@@ -1,0 +1,11 @@
+{
+  "session_id": "bed01_20bpm_20260827_paced_20bpm",
+  "bed": "bed01",
+  "subject_id": "sub05",
+  "condition": "paced_20bpm",
+  "lighting": "bright",
+  "duration_s": 60,
+  "exposure": 156,
+  "white_balance": 4600,
+  "created_at": "20bp-m- 20:26:08"
+}
