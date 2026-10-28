@@ -99,6 +99,21 @@ def test_backs_off_and_rebuilds_the_session_while_unreachable():
     assert board.sessions >= n                          # a fresh session after every failure
 
 
+def test_endpoint_wins_over_a_stale_full_url():
+    s = ThermalStream({**CFG, "endpoint": "/new/frame", "full_url": "http://192.168.4.1/thermal/frame"},
+                      session_factory=FakeBoard().factory)
+    assert s.url == "http://192.168.4.1/new/frame"
+
+
+def test_stop_during_a_request_does_not_crash_the_thread():
+    board = FakeBoard()
+    s = _run(board, 0.2)
+    s._close_session()                                  # what stop() does from another thread
+    time.sleep(0.2)
+    assert s._thread.is_alive()                         # it simply reconnects
+    s.stop()
+
+
 def test_wrong_size_payload_is_not_a_frame():
     s = ThermalStream(CFG, session_factory=FakeBoard().factory)
     assert s._decode_frame(b"\x00" * 100) is None

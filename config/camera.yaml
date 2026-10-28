@@ -14,6 +14,8 @@ d435:
     height: 240
     fps: 30                    # matched to RGB fps for frame-pair sync
     format: z16
+    emitter_enabled: true      # IR dot projector: texture for stereo depth on plain gowns/blankets
+    laser_power: null          # null = camera default (150 mW on D435); range 0-360
   ir_left:
     width: 848
     height: 480
@@ -45,7 +47,7 @@ waveshare_thermal:
   enabled: true
   base_ip: "http://192.168.4.1"
   endpoint: "/thermal/frame"   # confirmed active from scan_esp32.py
-  full_url: "http://192.168.4.1/thermal/frame"
+  full_url: "http://192.168.4.1/thermal/frame"   # used only if endpoint is empty; base_ip + endpoint wins
   frame_width: 80              # confirmed from test_waveshare_thermal.py
   frame_height: 62             # confirmed from test_waveshare_thermal.py
   expected_bytes: 9920         # 62 * 80 * 2 (int16)

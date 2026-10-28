@@ -208,7 +208,9 @@ estimators run alongside: they are shown on the bed page and logged by the sessi
 Fused learned paths are **secondary**: each second, one that differs from the median
 signal-processing reading by more than the agreement gate (4 br/min, 10 bpm) is dropped from
 that update, so a biased network can pull an agreeing reading slightly but can never blank or
-override the vital. When no signal-processing path has a value, the learned paths fuse alone.
+override the vital. When no signal-processing path has a value (apnoea, movement, no
+signal) the learned paths are not used at all, so a biased network can never supply the vital
+on its own.
 Check them with a [comparison](#recording-and-comparing-estimators) session.
 
 ### Trained weights (model registry)

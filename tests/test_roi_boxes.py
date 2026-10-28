@@ -42,6 +42,17 @@ def test_chest_box_ignores_flickering_hips():
     assert len(shapes) == 1, f"chest window changed shape: {shapes}"
 
 
+def test_chest_box_survives_a_flickering_shoulder():
+    b = ROIBuilder(patient_id="t")
+    conf = np.full(17, 0.9)
+    one_shoulder = conf.copy()
+    one_shoulder[5] = 0.1
+    # every 4th frame loses a shoulder (not the first: with no history there is nothing to hold)
+    shapes = {b.build(_bundle(), _track(KP, one_shoulder if i % 4 == 3 else conf)).chest_depth.shape
+              for i in range(60)}
+    assert len(shapes) == 1, f"chest window changed shape: {shapes}"
+
+
 def test_chest_box_sits_below_the_shoulders_between_them():
     b = ROIBuilder(patient_id="t")
     b.cfg.stabilize = False

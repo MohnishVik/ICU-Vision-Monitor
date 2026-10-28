@@ -94,6 +94,7 @@ class RRConfig:
     min_valid_pixels: int      = 30
     motion_mm: float           = 20.0      # half-second mean depth step that counts as movement
     motion_max_hold_s: float   = 4.0       # bridge movements up to this long; restart after
+    dropout_hold_s: float      = 1.0       # repeat the last sample through depth holes this long
     body_band_mm: Optional[float] = 150.0  # keep chest pixels within this of the median depth
 
     @classmethod
@@ -263,7 +264,15 @@ def _spectral_rate_bpm(
     peak_power = float(np.sum(sub_psd[peak_mask]))
     frac = peak_power / total_power
 
-    return peak_freq * 60.0, frac, {"peak_freq_hz": peak_freq, "band_power": total_power}
+    # Second-tallest separate peak, relative to the tallest. Near 1 means two rhythms of
+    # similar strength (shallow breathing mixed with talking or typing): the "rate" would be
+    # a coin toss between them.
+    pk, _ = scipy.signal.find_peaks(sub_psd)
+    far = [i for i in pk if abs(sub_freqs[i] - peak_freq) > 2 * half]
+    second = float(max((sub_psd[i] for i in far), default=0.0) / sub_psd[peak_i])
+
+    return peak_freq * 60.0, frac, {"peak_freq_hz": peak_freq, "band_power": total_power,
+                                    "second_peak_ratio": round(second, 3)}
 
 
 def _sqi_from_frac(frac: float, q: _QualityCfg) -> float:
@@ -384,6 +393,7 @@ class RRModule:
         self._depth_motion = MotionGate(depth_fs, abs_thresh=cfg.motion_mm)
         self._depth_bridge = MotionBridge(self._depth_motion, mode="add", max_hold_s=cfg.motion_max_hold_s)
         self._last_depth_raw: Optional[float] = None
+        self._dropout_since: Optional[float] = None
         self._last_motion_report = 0.0
         self._last_thermal_ts: Optional[float] = None
         self._thermal_src: Optional[str] = None     # "nostril" | "warmest_patch"
@@ -427,10 +437,22 @@ class RRModule:
         mean_z = _mean_from_depth_roi(crop, self.cfg.min_valid_depth_units, self.cfg.min_valid_pixels,
                                       self.cfg.body_band_mm)
         if mean_z is None:
-            # brief dropout: repeat the last raw sample so the buffer does not go stale
+            # brief dropout (a few frames of depth holes): repeat the last raw sample. A long
+            # one (chest covered, out of view) must not become a flat line, which the apnoea
+            # detector would read as a breath-hold: drop the window and wait for signal.
+            if self._dropout_since is None:
+                self._dropout_since = now
+            if now - self._dropout_since > self.cfg.dropout_hold_s:
+                if self._depth.sig:
+                    self._depth.reset()
+                    self._depth_bridge.reset()
+                    self._apnea_state = _ApneaState()
+                return
             mean_z = self._last_depth_raw
             if mean_z is None:
                 return
+        else:
+            self._dropout_since = None
         self._last_depth_raw = mean_z
         items, restart = self._depth_bridge.feed(mean_z, now)
         if restart:                                    # moving for longer than motion_max_hold_s
@@ -488,6 +510,13 @@ class RRModule:
             smoothed, fs, path.cfg.band_hz, self.cfg.quality, path.cfg.nfft, path.cfg.segment_s
         )
         sqi = _sqi_from_frac(frac, self.cfg.quality)
+        # A second rhythm almost as strong as the chosen one (shallow breathing mixed with
+        # talking or typing) makes the rate uncertain: quality falls from full at a ratio of
+        # 0.5 to 30 % at 0.9+, so fusion and the signal bars reflect the doubt. On the paced
+        # recording this kept every reading and cut the error of the ones that stay fused.
+        second = dbg.get("second_peak_ratio")
+        if second is not None:
+            sqi *= float(np.clip((1.0 - second) / 0.5, 0.3, 1.0))
 
         # value=None whenever the quality gate fails or an apnea is confirmed
         value: Optional[float] = rate_bpm

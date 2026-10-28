@@ -66,6 +66,7 @@ class PainConfig:
     device: str = "auto"
     baseline_s: float = 60.0           # seconds of visible face used to learn the calm baseline
     min_rise: float = 0.10             # smallest rise above baseline that counts
+    forget_after_s: float = 120.0      # no face this long -> relearn the baseline (new patient?)
 
     @classmethod
     def from_dict(cls, d: Optional[dict]) -> "PainConfig":
@@ -96,6 +97,7 @@ class PainModule:
         ])
         self._scores: Deque[float] = deque(maxlen=max(1, cfg.window))
         self._last_ts: Optional[float] = None
+        self._last_face_ts: Optional[float] = None
         self.reset_baseline()
 
     def reset_baseline(self) -> None:
@@ -129,6 +131,11 @@ class PainModule:
         face = roi.face_roi if roi is not None else None
         if face is None or face.size == 0:
             return self._none("no_face", t0, 0)
+        # No face for a long time usually means the patient left (or a new one arrived):
+        # never judge a face against someone else's calm baseline.
+        if self._last_face_ts is not None and now - self._last_face_ts > self.cfg.forget_after_s:
+            self.reset_baseline()
+        self._last_face_ts = now
         face_px = int(min(face.shape[:2]))
         if face_px < self.cfg.min_face_px:
             return self._none("face_too_small", t0, face_px)

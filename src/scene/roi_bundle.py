@@ -88,6 +88,7 @@ class ROIGeometryConfig:
     chest_top: float = 0.08         # starts this far below the shoulder line (x shoulder width)
     chest_height: float = 0.55      # height in shoulder widths
     abd_height: float = 0.55        # abdomen height when hips are not seen
+    chest_hold_frames: int = 30     # keep the last shoulder-based chest window this long (~1 s)
     stabilize: bool = True
     # bbox-fraction fallbacks (top, bottom) along the person's height
     face_frac: tuple[float, float] = (0.00, 0.22)
@@ -144,7 +145,10 @@ class BoxStabilizer:
             return None
         c = np.array([(box[0] + box[2]) / 2.0, (box[1] + box[3]) / 2.0])
         s = np.array([float(box[2] - box[0]), float(box[3] - box[1])])
-        if self._c is None or np.abs(c - self._c).max() > self.snap_frac * max(1.0, s.max()):
+        jumped = self._c is not None and (
+            np.abs(c - self._c).max() > self.snap_frac * max(1.0, s.max())          # moved
+            or np.abs(s - self._s).max() > self.snap_frac * max(1.0, self._s.max()))  # resized
+        if self._c is None or jumped:
             self._c, self._s = c, s
             self._box = _clamp_box(c[0] - s[0] / 2, c[1] - s[1] / 2, c[0] + s[0] / 2, c[1] + s[1] / 2, w, h)
             return self._box
@@ -183,6 +187,8 @@ class ROIBuilder:
         self.thermal_reg = thermal_reg
         self._troi_stab = RoiStabilizer()
         self._stab = {k: BoxStabilizer() for k in ("face", "chest", "abdomen")}
+        self._last_chest: Optional[tuple[int, int, int, int]] = None
+        self._chest_misses = 0
 
     def _steady(self, key: str, box, w: int, h: int):
         return self._stab[key].update(box, w, h) if self.cfg.stabilize else box
@@ -194,8 +200,15 @@ class ROIBuilder:
             (xa, ya), (xb, yb) = sorted(sh)
             sw = max(20.0, xb - xa)
             top = (ya + yb) / 2.0 + self.cfg.chest_top * sw
-            return _clamp_box(xa + self.cfg.chest_inset * sw, top,
-                              xb - self.cfg.chest_inset * sw, top + self.cfg.chest_height * sw, w, h)
+            box = _clamp_box(xa + self.cfg.chest_inset * sw, top,
+                             xb - self.cfg.chest_inset * sw, top + self.cfg.chest_height * sw, w, h)
+            self._last_chest, self._chest_misses = box, 0
+            return box
+        # One shoulder briefly below conf_min (a turn, an arm across): keep the last shoulder-
+        # based window for ~1 s rather than flipping to the differently-shaped bbox fallback.
+        self._chest_misses += 1
+        if self._last_chest is not None and self._chest_misses <= self.cfg.chest_hold_frames:
+            return self._last_chest
         return self._bbox_frac_box(bbox, self.cfg.chest_frac, w, h)
 
     # -- region geometry --------------------------------------------------- #
@@ -274,6 +287,7 @@ class ROIBuilder:
         lighting = self._lighting(rgb)
 
         if track.person is None:
+            self._last_chest, self._chest_misses = None, 0
             return ROIBundle(
                 face_roi=None, chest_roi=None, chest_depth=None,
                 abdomen_roi=None, abdomen_depth=None, limb_rois=[],

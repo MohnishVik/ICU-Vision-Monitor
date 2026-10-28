@@ -61,8 +61,11 @@ class ThermalStream:
         """
         self.cfg = cfg
         base = str(cfg.get("base_ip", "http://192.168.4.1")).rstrip("/")
-        endpoint = str(cfg.get("endpoint") or "/thermal/frame")
-        self.url = cfg.get("full_url") or f"{base}{endpoint if endpoint.startswith('/') else '/' + endpoint}"
+        endpoint = cfg.get("endpoint")
+        if endpoint:                       # base_ip + endpoint is what scan_esp32.py tells you to set
+            self.url = f"{base}{endpoint if str(endpoint).startswith('/') else '/' + str(endpoint)}"
+        else:
+            self.url = cfg.get("full_url") or f"{base}/thermal/frame"
         self.timeout_s = float(cfg.get("timeout_s", 2.0))
         self.retry_s = float(cfg.get("retry_delay_s", 1.0))
         self.max_backoff_s = float(cfg.get("max_backoff_s", 5.0))
@@ -135,11 +138,12 @@ class ThermalStream:
                 self._wake.wait(wait)
 
     def _poll_once(self) -> bool:
-        if self._session is None:
-            self._session = self._session_factory()
+        session = self._session                      # local: stop() may clear the attribute
+        if session is None:
+            session = self._session = self._session_factory()
         try:
-            r = self._session.get(self.url, timeout=self.timeout_s)
-        except requests.exceptions.RequestException:
+            r = session.get(self.url, timeout=self.timeout_s)
+        except Exception:  # noqa: BLE001 - RequestException, or a session closed by stop()
             self.failures += 1
             return False
         if r.status_code != 200:

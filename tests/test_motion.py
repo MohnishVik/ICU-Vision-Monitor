@@ -76,6 +76,21 @@ def test_frequent_shifts_no_longer_blank_breathing():
     assert abs(np.median(shown) - 15.0) < 1.0
 
 
+def test_covered_chest_is_not_mistaken_for_apnoea():
+    rr, _ = _rr()
+    depth = np.zeros((48, 64), np.uint16)
+    rgb = np.zeros((48, 64, 3), np.uint8)
+    apnoea = []
+    for i in range(int(70 * FS)):
+        ts = i / FS
+        # breathing for 40 s, then the chest window has no valid depth (blanket, arm) for 30 s
+        depth[:] = int(1200 + 6 * np.sin(2 * np.pi * 0.25 * ts)) if ts < 40 else 0
+        m = rr.process(FrameBundle(rgb=rgb, depth=depth, ir=None, thermal=None, ts_mono=ts)).get("rr.depth")
+        if m is not None and ts > 40:
+            apnoea.append(bool(m.meta.get("apnea")))
+    assert not any(apnoea)
+
+
 def test_sustained_movement_reports_motion_then_recovers():
     rows = _run_rr(lambda ts: 1200, seconds=80, jitter_at=lambda ts: 30 <= ts < 38)  # 8 s moving
     assert any(r == "motion" and 30 <= ts <= 60 for ts, _, r in rows)

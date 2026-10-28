@@ -18,7 +18,8 @@ meta.reason = "paths_disagree".
 Secondary paths (the learned networks, when fused) are advisory: when one is
 further than the gate from the signal-processing paths it is dropped for that
 update (meta.rejected = "disagrees_with_primary") instead of blanking the vital.
-With no primary path available, secondary paths fuse on their own.
+With no primary value they are not used at all (meta.rejected = "no_primary"): a learned
+path alone must never supply the vital, e.g. during apnoea.
 """
 from __future__ import annotations
 
@@ -66,6 +67,13 @@ def fuse(measurements: Iterable[Optional[Measurement]], source: str,
             used.append(m)
 
     ts = max((m.ts for m in candidates), default=time.time())
+    # Secondary (learned) paths may refine a primary reading but never stand in for one:
+    # with no primary value (apnoea, movement, no signal) a network biased towards ~15
+    # br/min would otherwise put a normal-looking rate on screen and into the EWS.
+    if cfg.secondary and used and all(m.source in cfg.secondary for m in used):
+        for m in used:
+            rejected[m.source] = "no_primary"
+        used = []
     base_meta = {"inputs": [m.source for m in used], "rejected": rejected}
 
     if not used:

@@ -45,10 +45,13 @@ def test_fuse_blends_agreeing_secondary():
     assert set(out.meta["inputs"]) == {"rr.depth", "rr.cnn_lbrd"}
 
 
-def test_fuse_secondary_alone_when_no_primary():
+def test_secondary_never_supplies_the_vital_alone():
+    # apnoea: rr.depth has no value; the learned CNN (biased to ~15) must not fill the gap
     cfg = FusionConfig(agreement_gate_bpm=4.0, secondary=frozenset({"rr.cnn_lbrd"}))
-    out = fuse([m(None, 0.9, "rr.depth"), m(15.0, 0.8, "rr.cnn_lbrd")], "rr.fused", cfg)
-    assert out.value == 15.0
+    out = fuse([Measurement(None, 1.0, 100.0, "rr.depth", 1.0, {"apnea": True}),
+                m(15.0, 0.8, "rr.cnn_lbrd")], "rr.fused", cfg)
+    assert out.value is None
+    assert out.meta["rejected"]["rr.cnn_lbrd"] == "no_primary"
 
 
 def test_fuse_passes_through_the_actionable_reason():

@@ -111,6 +111,16 @@ def test_noisy_baseline_widens_the_margin():
     assert mod.personal_threshold() - mod.baseline > 0.15
 
 
+def test_baseline_is_forgotten_after_a_long_absence():
+    mod = PainModule(PainConfig(device="cpu", baseline_s=5.0))
+    for i in range(6):
+        mod.process(_bundle(float(i)), _roi(_face(i)))
+    assert mod.baseline is not None
+    mod.process(_bundle(10.0), _roi(None))                 # patient leaves
+    mod.process(_bundle(200.0), _roi(_face(99)))           # someone in view 3 min later
+    assert mod.baseline is None
+
+
 def test_reset_relearns_the_baseline():
     mod = _learned([0.7] * 60)
     assert mod.baseline is not None

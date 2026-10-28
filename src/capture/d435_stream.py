@@ -78,6 +78,15 @@ class D435Stream:
         if preset is not None:
             depth_sensor.set_option(rs.option.visual_preset, preset)
 
+        # The IR dot projector gives the two IR cameras texture to match on plain surfaces
+        # (gowns, blankets); without it chest depth gets holes and noise. The device keeps
+        # whatever another app (e.g. RealSense Viewer) last set, so set it every start.
+        if self._supports(depth_sensor, rs.option.emitter_enabled):
+            depth_sensor.set_option(rs.option.emitter_enabled, 1 if depth.get("emitter_enabled", True) else 0)
+        power = depth.get("laser_power")
+        if power is not None and self._supports(depth_sensor, rs.option.laser_power):
+            self._set(depth_sensor, rs.option.laser_power, float(power))
+
         color_sensor = self._get_color_sensor(device)
 
         # ── lock exposure and white balance ───────────────────────────────────
@@ -389,6 +398,10 @@ class D435Stream:
         print(f"  Depth Scale      : {self.depth_scale:.6f} m/unit")
         print(f"  Depth Preset     : {depth_sensor.get_option(rs.option.visual_preset)}"
               f"  (expected {self.cfg['depth'].get('visual_preset')})")
+        if self._supports(depth_sensor, rs.option.emitter_enabled):
+            print(f"  IR projector     : {'on' if depth_sensor.get_option(rs.option.emitter_enabled) else 'OFF'}"
+                  + (f", {depth_sensor.get_option(rs.option.laser_power):.0f} mW"
+                     if self._supports(depth_sensor, rs.option.laser_power) else ""))
         print(f"  Auto-Exposure    : {color_sensor.get_option(rs.option.enable_auto_exposure)}"
               "  (must be 0)")
         print(f"  Exposure mode    : {self.locked.get('mode')}")
