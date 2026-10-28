@@ -200,14 +200,18 @@ export default function ThermalAlign() {
           <section className="card card-pad flex flex-col gap-3" aria-labelledby="how-h">
             <h2 id="how-h" className="t-head">How to align</h2>
             <ol className="flex flex-col gap-2 t-label text-ink2 list-decimal pl-5 max-w-[46ch]">
-              <li>Fill a mug with hot water and hold it at about the patient's distance from the camera.</li>
-              <li>Take a snapshot. Click the mug in the colour image, then in the thermal image.</li>
-              <li>Move the mug to another part of the view, take a new snapshot, and repeat.</li>
+              <li>Hold a warm, small target at about the patient's distance: a mug of hot water, or an open
+                hand (the patient's or yours) with the fingers spread.</li>
+              <li>Take a snapshot. Click the same point on it in the colour image, then in the thermal image:
+                the mug's centre, or a fingertip or the middle of the palm.</li>
+              <li>Move the target to another part of the view (top, bottom, left, right, centre), take a new
+                snapshot, and repeat.</li>
               <li>Mark at least 4 spots spread across the view. With 5 or more, the system can measure its own accuracy.</li>
             </ol>
             <p className="t-micro text-mute">
-              Faces are blurred in the colour image, so a warm object works better than facial features.
-              This only needs redoing if either camera is moved.
+              Faces are blurred in the colour image, so facial points cannot be clicked accurately; use a warm
+              object or a hand instead. Keep it at the depth of the patient's face and chest. This only needs
+              redoing if either camera is moved.
             </p>
           </section>
 

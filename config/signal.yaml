@@ -148,7 +148,10 @@ pain:
 # disagrees with the signal-processing reading by more than the agreement gate it is
 # dropped for that second, so it can add to the reading but never blank it.
 learned:
-  fuse: [rr.cnn_lbrd, hr.efficientphys]
+  # rr.cnn_lbrd was fused until scripts/eval_weights.py showed it answers 14-17.5 br/min for any
+  # true rate from 6 to 30: inside the agreement gate it only pulled the reading toward 15.
+  # It stays visible on the bed page; add it back here after fine-tuning it on your data.
+  fuse: [hr.efficientphys]
   device: "auto"
   rr_lbrd:
     weights: "models/public/rr_cnn1d_lbrdic.pth"           # 250 samples = 10 s @ 25 Hz, whole-frame green

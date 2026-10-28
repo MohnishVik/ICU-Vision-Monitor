@@ -49,9 +49,10 @@ def test_vitals_snapshot_contract(demo_client):
     assert set(s["vitals"]) == {"rr", "hr"}
     assert s["pain"]["available"] is True and s["pain"]["experimental"] is True
     assert {"rr.depth", "rr.cnn_lbrd", "rr.cnn_d435"} <= set(s["vitals"]["rr"]["sources"])
-    # signal.yaml fuses the LBRD-IC CNN and EfficientPhys; the D435 CNN stays display-only
-    assert s["vitals"]["rr"]["sources"]["rr.cnn_lbrd"]["role"] == "fused"
+    # signal.yaml fuses only EfficientPhys; both breathing CNNs (constant-output) are display-only
+    assert s["vitals"]["rr"]["sources"]["rr.cnn_lbrd"]["role"] == "display"
     assert s["vitals"]["rr"]["sources"]["rr.cnn_d435"]["role"] == "display"
+    assert s["vitals"]["hr"]["sources"]["hr.efficientphys"]["role"] == "fused"
     assert len(s["scene"]["keypoints"]) == 17 and len(s["scene"]["chair"]) == 4
 
 

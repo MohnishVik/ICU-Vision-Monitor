@@ -198,9 +198,10 @@ export const GLOSSARY = g({
   learned: {
     title: 'Experimental learned model',
     body: 'A neural network still being validated against reference measurements. As configured, the '
-      + 'LBRD-IC breathing CNN and EfficientPhys heart-rate network are fused as secondary paths: they '
-      + 'count only while within 4 br/min or 10 bpm of the signal-processing reading, and can stand in '
-      + 'only when that reading is missing. The D435 breathing CNN is shown only.',
+      + 'EfficientPhys heart-rate network is fused as a secondary path: it counts only while within '
+      + '10 bpm of the signal-processing reading and never stands in when that reading is missing. The '
+      + 'two breathing CNNs are shown only: tested at 6-30 br/min they give nearly the same answer '
+      + 'whatever the true rate, so they would only pull the reading toward their favourite value.',
   },
   estimate: {
     title: 'Estimate',

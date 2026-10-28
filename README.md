@@ -58,10 +58,11 @@ estimator, including the experimental learned models, against reference values y
 | **Falls / chair exit** | YOLOv8 pose keypoints → kinematics + state machine + GRU classifier, confirmed by a hybrid gate | posture state, confirmed falls |
 | **Breathing synchrony (TAA)** | Phase difference between chest and abdomen depth signals | paradoxical-breathing flag |
 | **Pain proxy** | MobileNetV3-Small on the face crop, trained on SynPAIN (`SynPain.ipynb`) | probability of a pain expression; **experimental, never alarms** |
-| **Learned RR / HR** | 1-D CNNs (LBRD-IC; D435 fine-tune) and EfficientPhys (UBFC-rPPG), each fed exactly its training input | shown and logged beside the signal-processing values; LBRD-IC CNN and EfficientPhys are **fused as secondary paths** (dropped when they disagree), the D435 CNN is shown only; **experimental** |
+| **Learned RR / HR** | 1-D CNNs (LBRD-IC; D435 fine-tune) and EfficientPhys (UBFC-rPPG), each fed exactly its training input | shown and logged beside the signal-processing values; EfficientPhys is **fused as a secondary path** (dropped when it disagrees, never used alone); both breathing CNNs are shown only because they barely track rate (see [Model files](#model-files)); **experimental** |
 
 Every number carries a **signal quality index (SQI)**. When a vital cannot be measured, the
-system says so and why ("signal too weak", "sensors disagree") instead of guessing.
+system says so and why ("signal too weak", "patient moving", "face too dark", "sensors disagree")
+instead of guessing.
 
 ---
 
@@ -111,14 +112,17 @@ flowchart LR
 ```
 
 1. **Capture.** The D435 delivers aligned colour and depth frames; the thermal camera is polled
-   in the background, and each D435 frame is paired with the newest thermal frame (≤ 250 ms old).
+   in the background (one endpoint, at most 10 requests/s, so the ESP32 is never overloaded), and
+   each D435 frame is paired with the newest thermal frame (≤ 600 ms old).
 2. **Scene.** Pose estimation finds every person in view. A one-time chair calibration tells the
    tracker which person is the patient, and it stays locked on them while staff come and go.
-   The patient's skeleton defines the face, chest, abdomen and nostril regions.
+   The patient's skeleton defines the face, chest (sternum, anchored on the shoulders), abdomen and
+   nostril regions; each region is smoothed so keypoint jitter does not move it.
 3. **Modules.** Each vital-sign module turns its region into a `Measurement`
    (`value`, `sqi`, `source`, `latency_ms`, `meta`). `value = None` means "cannot measure right now".
 4. **Fusion.** Estimates of the same vital are combined by inverse-variance weighting; low-quality
-   paths are dropped, and paths that disagree produce no number rather than an average. A Kalman
+   paths are dropped, and paths that disagree produce no number rather than an average. Thermal RR
+   is fused only once the thermal camera is aligned to the nostrils. A Kalman
    filter applies physiological rate-of-change limits, trends are computed over 5/15/60/240 min,
    and the early-warning score drives an alarm state machine. Learned estimators and pain are
    shown beside the fused values and never reach the alarms unless you enable them.
@@ -127,14 +131,17 @@ flowchart LR
 ---
 
 ## Hardware
-- Intel RealSense D435 (RGB + Depth + IR)
+- Intel RealSense D435: the RGB camera is used directly (heart rate, pain, pose); the left and
+  right IR cameras are used through the depth map the D435 computes from them (breathing, TAA,
+  chair/fall geometry); the IR dot projector is switched on at every start so depth works on plain
+  gowns and blankets. The raw IR images are not streamed.
 - ESP32-S3 Thermal Camera (inference-only RR signal — not used in training)
 - Jetson Orin Nano Super 8GB (edge deployment)
 
 | Device | Settings used | Notes |
 |---|---|---|
 | Intel RealSense D435 | RGB 640×480 @ 30 fps (bgr8), depth 424×240 @ 30 fps aligned to RGB, exposure / gain / white balance metered once at startup and then locked ([below](#camera-exposure)) | Mount 1.5–2.0 m from the patient at chest-to-face height, tilted 10–30° down |
-| Waveshare ESP32-S3 thermal camera | 62×80 px, int16 centi-°C over HTTP at `http://192.168.4.1/thermal/frame` | Join its Wi-Fi access point; the endpoint is auto-discovered |
+| Waveshare ESP32-S3 thermal camera | 62×80 px, int16 centi-°C over HTTP at `http://192.168.4.1/thermal/frame` | Join its `WSThermal` Wi-Fi. Only `waveshare_thermal.endpoint` is requested, paced to 10 Hz with back-off (bursts of requests crash the board) |
 | NVIDIA Jetson Orin Nano Super 8GB | JetPack, CUDA | Edge deployment target; a laptop works for development |
 
 ### Camera exposure
@@ -170,7 +177,8 @@ everything else in the last 20–30 s. What lowers it, and what to do:
 
 | Cause | What the screen says | Fix |
 |---|---|---|
-| Patient moving (turning, talking, settling) | *Patient moving*: the window restarts and refills in 20 s (breathing) or 10 s (heart rate) | Wait; nothing to adjust |
+| Patient moving (turning, talking, settling) | Brief moves are bridged and the reading continues; after more than 4 s (breathing) or 3 s (heart rate) of movement, *Patient moving* while the window refills (20 s / 10 s) | Wait; nothing to adjust |
+| Two rhythms of similar strength (shallow breathing while talking or typing) | Lower signal bars; the reading counts less in fusion | Nothing to adjust; it recovers when breathing is regular |
 | Face too dark for heart rate | *Face too dark* | Diffuse light facing the patient (a lamp behind the camera, not overhead only); keep the face larger than ~120 px across (camera 1.0–1.5 m away) |
 | Chest hidden by blanket folds or arms | *Signal too weak* | Keep the sternum area in view |
 
@@ -181,9 +189,11 @@ noise is larger than that change, and the reading is withheld rather than guesse
 Breathing processing (measured on the D435 with paced breathing; see `config/signal.yaml`):
 posture drift slower than 4.8 /min is removed with a high-pass filter before the spectrum, the
 spectrum uses 20 s segments so slow breaths are resolved, only chest pixels within 15 cm of the
-body's median depth are averaged, and movement restarts the window. Against counted breaths this
-raised the quality score from 29 % to 85 % and the share of time with a reading from 77 % to 93 %,
-and removed false readings caused by the patient settling into the chair.
+body's median depth are averaged, the chest window is anchored on the shoulders and smoothed,
+and brief movements are bridged instead of restarting the window. On the paced-breathing
+recording this gives a mean error of 0.87 br/min with 94 % of readings within ±2 br/min
+(quality score 29 % → 85 %, reading shown 77 % → 93 % of the time), and removed false readings
+caused by the patient settling into the chair.
 
 ---
 
@@ -198,13 +208,15 @@ and removed false readings caused by the patient settling into the chair.
 | Fall Detection | YOLOv8n-pose → kinematics → state machine + GRU classifier → hybrid confirmation gate | `yolov8n-pose.pt`, `fall_gru_pseudo.pt` | Running |
 | Breathing synchrony (TAA) | Hilbert phase difference, chest vs abdomen depth | none | Running |
 | Pain Assessment | MobileNetV3-Small on the face crop, notebook eval transform reproduced exactly, 5-s average, read against the patient's own calm baseline (learned over the first 60 s of face, or on "Set calm baseline") | `pain_mobilenetv3_synpain.pth` | Running, **experimental** (never alarms) |
-| Learned RR | `Resp1DCNN` on 10 s of whole-frame green (LBRD-IC) and on 10 s of chest depth (D435 fine-tune) | `rr_cnn1d_lbrdic.pth`, `rr_cnn1d_d435_finetuned.pth` | Running, **experimental**; LBRD-IC fused as secondary, D435 shown only |
+| Learned RR | `Resp1DCNN` on 10 s of whole-frame green (LBRD-IC) and on 10 s of chest depth (D435 fine-tune) | `rr_cnn1d_lbrdic.pth`, `rr_cnn1d_d435_finetuned.pth` | Running, **experimental**, shown only (neither tracks rate; see below) |
 | Learned HR | EfficientPhys on 72×72 face frames, 72-frame chunks, Welch peak | `hr_efficientphys_ubfc.pth` | Running, **experimental**, fused as secondary |
 
 The signal-processing paths are primary because they are transparent and tunable. The learned
 estimators run alongside: they are shown on the bed page and logged by the session recorder.
 `learned.fuse` in `config/signal.yaml` chooses which of them also join the fused value: `true`
-(all), `false` (none) or a list. The shipped config fuses `rr.cnn_lbrd` and `hr.efficientphys`.
+(all), `false` (none) or a list. The shipped config fuses only `hr.efficientphys`; the breathing
+CNNs are not fused because `scripts/eval_weights.py` shows they give nearly the same answer for
+any true rate.
 Fused learned paths are **secondary**: each second, one that differs from the median
 signal-processing reading by more than the agreement gate (4 br/min, 10 bpm) is dropped from
 that update, so a biased network can pull an agreeing reading slightly but can never blank or
@@ -217,7 +229,7 @@ Check them with a [comparison](#recording-and-comparing-estimators) session.
 
 | Module | Weights | Status |
 |--------|---------|--------|
-| Respiratory Rate (learned) | `rr_cnn1d_lbrdic.pth`, `rr_cnn1d_d435_finetuned.pth` | Experimental; LBRD-IC fused (secondary), D435 shown only |
+| Respiratory Rate (learned) | `rr_cnn1d_lbrdic.pth`, `rr_cnn1d_d435_finetuned.pth` | Experimental, shown only |
 | Heart Rate (learned) | `hr_efficientphys_ubfc.pth` | Experimental, fused (secondary) |
 | Fall Detection | `fall_gru_pseudo.pt` (+ `fall_gru_pseudo_e1.pt`) | Running |
 | Pain Assessment | `pain_mobilenetv3_synpain.pth` | SynPAIN part 1 only; experimental; UNBC/BioVid pending |
@@ -231,6 +243,23 @@ What is known about each learned model, from its training notebook:
 | `hr_efficientphys_ubfc.pth` | `public/` | UBFC-rPPG (`baseline_hr.ipynb`) | 72×72 BGR face, normalised frame difference, 72-frame chunks | val MAE 8.53 BPM | Estimated 99–100 BPM for all 7 held-out subjects (true 87–111) |
 | `pain_mobilenetv3_synpain.pth` | `public/` | SynPAIN part 1 (`SynPain.ipynb`) | Resize 256 → CenterCrop 224 → ImageNet normalise | test AUROC 0.816, threshold 0.2962 | 2,667 pain vs 50 no-pain images; a blank image scores 0.44 (above threshold). Retrain on all parts with neutral faces |
 | `*.onnx` | `onnx/` | — | exports for TensorRT | — | `scripts/export_to_onnx.py` is a scaffold |
+
+**Weight check** (`python scripts/eval_weights.py`): every file is loaded exactly as the monitor
+loads it and probed with an input whose answer is known. Results on this repository's files:
+
+| File | Loads | Probe | Result |
+|---|---|---|---|
+| `yolov8n-pose.pt` | ✅ | ultralytics sample photos | 4 people in `bus.jpg`, 2 in `zidane.jpg` (correct) |
+| `fall_gru_pseudo.pt` | ✅ | simulated person sitting still vs falling | fall probability 0.01 still, 0.90 falling |
+| `fall_gru_pseudo_e1.pt` | ✅ | same | 0.18 still, 0.78 falling (weaker fallback) |
+| `hr_efficientphys_ubfc.pth` | ✅ | real face crop pulsing at 60/80/100/120 bpm | 60.2 / 80.0 / 100.2 / 120.0 bpm (tracks rate) |
+| `rr_cnn1d_lbrdic.pth` | ✅ | synthetic breathing at 6–30 br/min | answers 14.2–17.5 for every rate (MAE 6.6): regresses to its training mean |
+| `rr_cnn1d_d435_finetuned.pth` | ✅ | same, and the real paced recording | answers 6.2–6.6 for every rate (MAE 11.5; 8.9 on the recording) |
+| `pain_mobilenetv3_synpain.pth` | ✅ | neutral real faces | 0.73–0.91, all above its 0.2962 threshold: why pain is read against each patient's calm baseline |
+
+These probes show that a model works and how it is biased; they are not clinical accuracy. The
+two breathing CNNs need fine-tuning on your own recordings (`training/finetune.py`,
+[docs/RECORDING_AND_FINETUNING.md](docs/RECORDING_AND_FINETUNING.md)) before they can help.
 
 ---
 
@@ -314,20 +343,32 @@ models/
 
 ## First session with the cameras
 
-1. Connect the D435 by USB 3 and join the thermal camera's Wi-Fi network.
-2. Optional checks: `python scripts/diagnose_cameras.py` shows both streams;
-   `python scripts/scan_esp32.py` finds the thermal endpoint.
+1. Connect the D435 by USB 3, power the thermal camera and connect this PC's Wi-Fi to its
+   `WSThermal` network (the D435 is on USB, so losing internet is fine; use Ethernet if other PCs
+   must reach the dashboard). Check `waveshare_thermal.enabled: true` in `config/camera.yaml`.
+2. Optional checks: `python scripts/diagnose_cameras.py` shows both streams. Run
+   `python scripts/scan_esp32.py` only after flashing new firmware: it spaces its requests and
+   closes each connection so the ESP32 does not run out of memory.
 3. Start the monitor: `python main.py`, then open http://127.0.0.1:8000.
 4. **Set up the chair** (every session): open the bed and click the four corners of the seat in
    any order. Drag a corner to adjust, then **Start monitoring**. The seat polygon decides who the
    patient is and gives the fall detector its reference depth.
    Next time, `python main.py --reuse-calibration` skips this if nothing moved.
-5. **Align the thermal camera** (once per camera mount): on the bed page choose
-   **Align with colour camera**. Hold a mug of hot water at about the patient's distance, take a
-   snapshot, and click the mug in the colour image and then in the thermal image. Repeat at
-   4–6 spots spread across the view and save. The overlay check should show warm areas sitting on
-   the matching objects. After this, RR reads the temperature at the nostrils instead of the
-   warmest spot. (Faces are blurred in the colour image, so a warm object is the marker.)
+5. **Check the thermal stream:** on the bed page open the **Thermal** tab: a live heat image and,
+   with a face in view, the breath-temperature waveform. The log shows `[Thermal] Frames arriving`.
+6. **Align the thermal camera** (once per camera mount): bed page → **Align thermal**.
+   - Hold a small warm target at about the patient's face/chest distance: a mug of hot water, or
+     an open hand (the patient's or yours) with the fingers spread.
+   - **Take snapshot**, then click the same point in the colour image and in the thermal image
+     (mug centre, a fingertip, or the middle of the palm).
+   - Move the target to another part of the view (top, bottom, left, right, centre), **New
+     snapshot**, repeat: at least 4 spots, 5+ for an accuracy estimate. **Save alignment**.
+   - The overlay check should show warm areas sitting on the matching objects; if shifted, add
+     points and save again.
+   Faces are blurred in the colour image, so facial points (eye corners, nose) cannot be clicked
+   accurately; use the mug or a hand. After saving, the thermal row on the bed page changes from
+   "Thermal · warmest spot / Shown only" to "Nostril thermal / Fused", and thermal RR joins the
+   breathing rate. Until then it is shown only, because the warmest spot is usually the forehead.
 
 ---
 
@@ -358,15 +399,17 @@ Other `main.py` options: `--port` (default 8000), `--patient-id` (default `bed-1
 - **Bed view:** live face-blurred video with pose/chair overlay, HR and RR with signal quality,
   early-warning sub-score with a plain-language explanation ("RR 16→26 over 40 min"),
   alarms with acknowledge, 5 min to 4 h trends against NEWS2 bands, falls, breathing
-  synchrony, pain-expression probability (experimental), and a side-by-side table of every
+  synchrony, pain expression against the patient's calm baseline (experimental, with **Set calm
+  baseline**), and a side-by-side table of every
   estimator (signal-processing and learned) with its quality and whether it is fused.
   Trends can overlay every estimator; learned ones are dashed.
 - **Chair setup** happens in the browser: click the four seat corners on a still frame.
 - **Thermal camera (ESP32):** live heatmap with °C on hover and the breath-temperature waveform
-  RR is computed from. A one-time **alignment** (bed page → "Align with colour camera": click a
-  mug of hot water in both images at 4–6 spots) maps thermal pixels onto the colour image, so RR
-  reads the temperature at the nostrils instead of the warmest spot. Saved per bed in
-  `config/sessions/thermal_<bed>.json`; a fixed `homography_matrix` in `camera.yaml` also works.
+  RR is computed from. A one-time **alignment** (bed page → **Align thermal**: click a mug of hot
+  water or a hand in both images at 4–6 spots) maps thermal pixels onto the colour image, so RR
+  reads the temperature at the nostrils instead of the warmest spot, and only then joins the
+  fused breathing rate. Saved per bed in `config/sessions/thermal_<bed>.json`; a fixed
+  `homography_matrix` in `camera.yaml` also works.
 - **Alarms** escalate log → dashboard → chime → phone (config/ews_rules.yaml), are held back
   while staff are at the bedside, and falls stay up until acknowledged.
 - **Honesty rules:** a vital that cannot be measured shows "—" with the reason; a reading older
@@ -376,7 +419,8 @@ Other `main.py` options: `--port` (default 8000), `--patient-id` (default `bed-1
 - **System page:** server health, model files present/missing, every module's state with the
   reason, frame rate and latency.
 - **Record & compare page:** start/stop numbers-only recordings with reference values and score
-  every estimator (below).
+  every estimator (below); optionally capture per-frame training data and mark events (fall,
+  chair exit, talking, CPOT/BPS pain score, …) while recording.
 - **Alarm sound:** browsers block audio until you allow it — click **Turn on alarm sound** once.
 - **Design:** "Graphite & Bone": warm graphite neutrals with no blue, dark (night ward) and
   light themes, HR green / RR yellow as on bedside monitors, orange/red only for deviation and
@@ -421,11 +465,12 @@ Suggested protocol: paced breathing at 6, 10, 15, 20 and 30 br/min (2 min each),
 counted free breathing, oximeter readings every 30–60 s, repeated in bright and dim light,
 sitting still and talking, thermal on and off. The first 30 s of a session and 20 s after each
 reference change are not scored (`--warmup`, `--settle`), because the estimator windows are
-still filling. If a learned model beats the signal-processing paths across conditions, set
-`learned.fuse: true` in `config/signal.yaml`.
+still filling. If a learned model beats the signal-processing paths across conditions, add it to
+the `learned.fuse` list in `config/signal.yaml`.
 
 Sessions are saved as numbers only (`data/sessions/<bed>_<time>_<label>/`: `meta.json`,
-`estimates.csv`, `references.csv`); no images or video. Set `VISIONICU_SESSIONS_DIR` to store
+`estimates.csv`, `references.csv`, `events.csv`, and `frames.csv` when training capture is on); no
+images or video. Set `VISIONICU_SESSIONS_DIR` to store
 them elsewhere.
 
 ---
@@ -463,7 +508,10 @@ The score follows NEWS2 bands for the two parameters the camera measures (`confi
 
 ## Privacy
 
-- **No subject data is stored.** Vital signs are numbers; frames are processed in memory only.
+- **No images are stored.** Vital signs are numbers; frames are processed in memory only. With
+  **Capture training data** on, a session also keeps per-frame numbers derived from each frame
+  (chest/abdomen depth means, mean green, pose keypoints): no pixels, but still study data, so it
+  needs consent and secure storage.
 - **Faces are blurred** in the live stream for every detected person (patient and staff).
 - **Nothing is recorded** unless `privacy.allow_debug_capture: true` is set in `config/signal.yaml`.
   Even then only de-identified fall snapshots are written to `debug_captures/`, which is pruned
@@ -480,16 +528,15 @@ The score follows NEWS2 bands for the two parameters the camera measures (`confi
 
 | File | Purpose |
 |---|---|
-| `config/camera.yaml` | D435 streams, **exposure mode** (`auto_lock` or `fixed`, see [Camera exposure](#camera-exposure)), thermal camera address, sync tolerance, optional thermal `homography_matrix` |
-| `config/signal.yaml` | Signal-processing windows, frequency bands, quality gates, apnoea and TAA thresholds, fall-detector parameters, `pain` (weights, threshold, window), `learned` (weights, `fuse` switch), optional `privacy` and `scene` blocks |
+| `config/camera.yaml` | D435 streams, IR projector (`emitter_enabled`, `laser_power`), **exposure mode** (`auto_lock` or `fixed`, see [Camera exposure](#camera-exposure)), thermal camera address (`base_ip` + `endpoint`), polling rate and back-off, sync tolerance (`thermal_max_age_ms`), optional thermal `homography_matrix` |
+| `config/signal.yaml` | Signal-processing windows, frequency bands, high-pass and segment length, quality gates, motion bridging, apnoea and TAA thresholds, fall-detector parameters, `pain` (weights, window, calm-baseline length and margin), `learned` (weights, `fuse` list), optional `privacy` and `scene` blocks |
 | `config/ews_rules.yaml` | Early-warning bands, levels, alarm dwell, staff suppression, escalation stages |
 | `config/models.yaml` | Pose weights, module toggles, inference `device` (`cuda` on Jetson, `cpu` for laptop dev; pose falls back to CPU automatically when CUDA is unavailable), `use_onnx` |
 | `config/recording.yaml` | Reference only: the original recording protocol, kept for paper reproducibility |
 | `config/sessions/` | Saved chair calibrations and thermal alignments (created at runtime, git-ignored) |
 
 Values marked `TUNE` in `signal.yaml` are starting points to adjust on your own recordings.
-`rr.legacy_offline` holds the offline settings that reproduce the 1.88 BrPM paper result
-(consumed by `training/eval.py`, which is still a scaffold).
+`rr.legacy_offline` holds the offline settings that reproduce the 1.88 BrPM paper result.
 
 ---
 
@@ -520,8 +567,11 @@ All REST endpoints are under `/api` (interactive docs at `/docs` while the serve
 | GET | `/patients/{id}/stream.mjpg` | Live MJPEG (faces blurred) |
 | GET | `/models` | Expected weight files and whether each is present |
 | GET | `/patients/{id}/session` | Recording status |
-| POST | `/patients/{id}/session` | Start recording `{label, condition, notes, reference: {rr, hr}}` |
+| POST | `/patients/{id}/session` | Start recording `{label, condition, notes, reference: {rr, hr}, capture}` |
 | POST | `/patients/{id}/session/reference` | Log a reference `{rr?, hr?, note}` |
+| POST | `/patients/{id}/session/event` | Mark an event `{kind, value?, note}` (fall, chair_exit, pain_score, …) |
+| GET | `/session-event-kinds` | The event kinds accepted |
+| POST | `/patients/{id}/pain/baseline` | Relearn the patient's calm pain-expression baseline |
 | DELETE | `/patients/{id}/session` | Stop recording |
 | GET | `/sessions` | Recorded sessions, newest first |
 | GET | `/sessions/{sid}/report` | Coverage + MAE per source (`?warmup_s=&settle_s=`) |
@@ -538,7 +588,7 @@ summary of every bed (1 Hz). Every `Measurement` has the shape
 ICU-Vision-Monitor/
 ├── main.py                    # entry point: monitor engine + web dashboard
 ├── config/                    # camera, signal, EWS, model and recording settings
-├── models/                    # weight files (git-ignored): public/, finetuned/, onnx/
+├── models/                    # weight files: public/, finetuned/, onnx/
 ├── src/
 │   ├── types.py               # shared contracts: Measurement, FrameBundle, ROIBundle
 │   ├── capture/               # D435 stream, ESP32 thermal stream, SyncBuffer
@@ -551,10 +601,11 @@ ICU-Vision-Monitor/
 │                              # model-file check
 ├── frontend/                  # React + TypeScript + Tailwind + Recharts dashboard (Vite)
 ├── scripts/                   # camera diagnostics, ESP32 scanner, legacy HUD, eval/export
-├── training/                  # training and evaluation scaffolds
+├── training/                  # dataset windows, fine-tuning and evaluation on captured sessions
 ├── notebooks/                 # RR, HR, fall and pain debugging; paper figures
 ├── tests/                     # pytest suite
 ├── deploy/                    # Jetson setup script and systemd service
+├── docs/                      # recording and fine-tuning guide, logo
 └── .github/workflows/ci.yml   # CI: leakage check, fusion + web tests, frontend build
 ```
 
@@ -565,10 +616,11 @@ ICU-Vision-Monitor/
 | Script | What it does | Status |
 |---|---|---|
 | `scripts/diagnose_cameras.py` | Live D435 + thermal check before a session (`--d435-only`, `--thermal-only`) | Ready |
-| `scripts/scan_esp32.py` | Finds the thermal camera's active HTTP endpoint (`--ip 192.168.4.1`) | Ready |
+| `scripts/scan_esp32.py` | Finds the thermal camera's active HTTP endpoint (`--ip 192.168.4.1`); closes each connection and waits 0.5 s between requests so the ESP32 is not overloaded | Ready |
 | `scripts/run_monitor.py` | Legacy single-window OpenCV monitor (`python main.py --hud`) | Ready |
 | `scripts/compare_sessions.py` | Score recorded sessions: coverage + MAE per estimator, grouped by condition (`--out report.md`) | Ready |
-| `scripts/eval_weights.py` | Weight sanity check: RR MAE ≤ 3.84 bpm (LBRD-IC), HR MAE ≤ 3 bpm (UBFC), Fall recall ≥ 90 % (UR-Fall), Pain acc ≥ 75 % (SynPAIN) | Scaffold |
+| `scripts/eval_weights.py` | Loads every weight file as the monitor does and probes it with known answers (results in [Model files](#trained-weights-model-registry)); `--json` to save | Ready |
+| `scripts/import_reference.py` | Adds pulse-oximeter / bedside-monitor exports or PPG waveforms to a recorded session | Ready |
 | `scripts/export_to_onnx.py` | `.pth` → ONNX for TensorRT, validated within 0.1 bpm | Scaffold |
 
 ---
@@ -584,8 +636,9 @@ cd frontend && npm run build        # strict TypeScript check + production build
 The suite covers EWS scoring, fusion, Kalman, trends and alarms; the web API in demo mode and
 in camera mode with no hardware attached; live MJPEG streaming; thermal-to-colour alignment;
 and RR read at the nostrils; the pain and learned models against their training notebooks'
-preprocessing (skipped when torch or the git-ignored weights are absent); and session
-recording and scoring.
+preprocessing (skipped when torch or the weights are absent); session recording, training capture,
+fine-tuning and evaluation; camera exposure locking, motion bridging, ROI stability, the thermal
+reader's request pacing, and the pain baseline.
 
 GitHub Actions runs on every push and pull request:
 
@@ -683,11 +736,14 @@ bash deploy/setup_jetson.sh          # swap, max performance mode, dependencies 
 - **Pain model:** retrain on all SynPAIN parts with neutral faces as negatives and identities
   grouped correctly (the notebook's ID regex splits one person across train and test); then
   UNBC-McMaster and BioVid.
-- **Learned estimators:** record comparison sessions and fuse them only if they beat the
-  signal-processing paths; implement `eval_weights.py`.
+- **Learned breathing CNNs** give nearly the same answer for any rate (`scripts/eval_weights.py`):
+  capture training sessions and fine-tune them (`training/finetune.py`) before fusing them.
+  EfficientPhys tracks a synthetic pulse; confirm it on recorded sessions with a pulse oximeter.
 - **ONNX/TensorRT:** implement `export_to_onnx.py` and the `use_onnx` path for the Jetson.
-- **Training scripts** in `training/` are scaffolds.
-- **Thermal path** has been exercised with simulated frames; validate it on the physical ESP32.
+- **EfficientPhys and the pain model** cannot be fine-tuned with the built-in capture, which
+  never stores face images by design.
+- **Thermal path** has been exercised with simulated frames and a simulated board (request
+  pacing, back-off, reconnects); validate it on the physical ESP32.
   At much larger distances than the configured mount, the breathing spot may shrink below one
   thermal pixel.
 - **Early-warning score** covers RR and HR only.
