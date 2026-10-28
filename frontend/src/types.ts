@@ -53,6 +53,10 @@ export interface PainInfo {
   stale?: boolean;
   model?: string;
   trained_on?: string;
+  baseline?: number | null;            // this patient's calm score (median), once learned
+  baseline_state?: 'learning' | 'ready' | null;
+  baseline_progress?: number | null;   // 0-1 while learning
+  rise?: number | null;                // current score minus the baseline
 }
 
 export interface SessionStatus {

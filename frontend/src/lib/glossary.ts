@@ -401,15 +401,22 @@ export const GLOSSARY = g({
   // ------------------------------------------------------------------ pain
   pain: {
     title: 'Pain expression (experimental)',
-    body: 'Probability that the face shows a pain expression, averaged over the last 5 scores, from a '
-      + 'MobileNetV3 model trained on synthetic faces (SynPAIN). The training set was almost all pain '
-      + 'images, so it leans towards pain: even a blank image scores about 44 %. For research only: never '
-      + 'scored and never raises an alarm.',
+    body: 'Face-model score for a pain expression, averaged over the last 5 s, read against this '
+      + 'patient’s own calm baseline. The model (MobileNetV3, trained on synthetic SynPAIN faces) scores '
+      + 'real neutral faces high, so its absolute number means little; a clear rise above the patient’s '
+      + 'calm level is what is flagged. For research only: never scored and never raises an alarm.',
   },
   painThreshold: {
-    title: 'Model threshold',
-    body: 'Cut-off chosen on the training data (29.6 %). Above it the model calls the expression pain; '
-      + 'because of the training imbalance, that is not a clinical pain assessment.',
+    title: 'This patient’s threshold',
+    body: 'Calm baseline plus a margin: at least 10 points, or three times how much the calm score '
+      + 'naturally varied, whichever is larger. Above it the expression has clearly changed from the '
+      + 'patient’s resting face; it is not a clinical pain assessment.',
+  },
+  painBaseline: {
+    title: 'Calm baseline',
+    body: 'Learned from the first 60 s of visible face after monitoring starts. Press “Set calm baseline” '
+      + 'when the patient is settled and comfortable (for example after repositioning or analgesia) to '
+      + 'learn it again. A baseline learned while the patient was in pain would hide that pain.',
   },
 
   // ------------------------------------------------------------------ trends

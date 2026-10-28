@@ -79,6 +79,8 @@ export const api = {
     request<SessionStatus>(`/api/patients/${enc(id)}/session/event`,
                            { method: 'POST', body: JSON.stringify({ kind, value, note }) }),
   sessionEventKinds: () => request<{ kinds: string[] }>('/api/session-event-kinds'),
+  painBaseline: (id: string) =>
+    request<{ baseline_state: string }>(`/api/patients/${enc(id)}/pain/baseline`, { method: 'POST' }),
   stopSession: (id: string) => request<SessionStatus>(`/api/patients/${enc(id)}/session`, { method: 'DELETE' }),
   sessions: () => request<SessionMeta[]>('/api/sessions'),
   report: (sid: string, warmup: number, settle: number) =>

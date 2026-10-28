@@ -79,11 +79,43 @@ def test_scores_once_per_interval_and_averages_the_window():
     assert last.value == pytest.approx(float(np.mean(raws)), abs=1e-9)
 
 
-def test_flags_pain_against_the_trained_threshold_and_marks_experimental():
+def test_nothing_is_flagged_while_the_calm_baseline_is_learned():
     m = PainModule(PainConfig(device="cpu")).process(_bundle(0.0), _roi(_face(3)))["pain.mobilenetv3"]
-    assert m.meta["threshold"] == pytest.approx(0.2962)
-    assert m.meta["pain_detected"] == (m.value >= 0.2962)
+    assert m.meta["baseline_state"] == "learning" and m.meta["threshold"] is None
+    assert m.meta["pain_detected"] is False
+    assert m.meta["model_threshold"] == pytest.approx(0.2962)
     assert m.meta["experimental"] is True and 0.0 <= m.value <= 1.0
+
+
+def _learned(scores, **cfg):
+    mod = PainModule(PainConfig(device="cpu", **cfg))
+    for s in scores:
+        mod._learn(s)
+    return mod
+
+
+def test_baseline_cancels_the_models_high_bias_on_real_faces():
+    # a calm real face scores ~0.80 (the model's bias); it must not read as pain
+    rng = np.random.default_rng(0)
+    mod = _learned(np.clip(0.80 + rng.normal(0, 0.02, 60), 0, 1))
+    thr = mod.personal_threshold()
+    assert mod.baseline == pytest.approx(0.80, abs=0.02)
+    assert thr == pytest.approx(mod.baseline + 0.10, abs=0.02)   # min rise dominates a steady face
+    assert 0.82 < thr and not (0.83 >= thr)                       # calm wobble is not flagged
+    assert 0.95 >= thr                                            # a clear rise is
+
+
+def test_noisy_baseline_widens_the_margin():
+    rng = np.random.default_rng(1)
+    mod = _learned(np.clip(0.5 + rng.normal(0, 0.08, 60), 0, 1))
+    assert mod.personal_threshold() - mod.baseline > 0.15
+
+
+def test_reset_relearns_the_baseline():
+    mod = _learned([0.7] * 60)
+    assert mod.baseline is not None
+    mod.reset_baseline()
+    assert mod.baseline is None and mod.personal_threshold() is None
 
 
 def test_missing_weights_raise_a_clear_error(tmp_path):

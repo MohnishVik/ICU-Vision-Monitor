@@ -18,6 +18,17 @@ WHY "EXPERIMENTAL": the training run found 2,717 of SynPAIN's 10,710 images
 probability for research use and never drives alarms. Retrain on the full dataset
 before relying on it.
 
+PER-PATIENT BASELINE. Measured on ordinary, neutral real faces the model returns
+0.73-0.91, far above its 0.2962 threshold: it was trained on synthetic faces and its
+absolute output does not transfer to real ones. (Earlier builds looked better only
+because the camera ran underexposed; darkening the same faces pulls the output to
+0.32-0.46. Underexposing on purpose would ruin heart rate, so that is not the fix.)
+So the score is read RELATIVE to the patient's own calm face: for the first
+baseline_s seconds of visible face (or after "Set calm baseline" on the bed page) the
+module learns the patient's resting score and its spread; afterwards "pain_detected"
+means the 5-s mean rose above baseline + max(min_rise, 3 x robust spread). The model's
+fixed bias is in the baseline too, so it cancels. Still experimental, never alarms.
+
 Preprocessing reproduces the notebook's eval transform exactly:
     BGR face crop -> RGB PIL -> Resize(256) -> CenterCrop(224) -> ToTensor -> Normalize
 
@@ -53,6 +64,8 @@ class PainConfig:
     window: int = 5                    # scores averaged into `value`
     min_face_px: int = 40              # shorter side of the face crop
     device: str = "auto"
+    baseline_s: float = 60.0           # seconds of visible face used to learn the calm baseline
+    min_rise: float = 0.10             # smallest rise above baseline that counts
 
     @classmethod
     def from_dict(cls, d: Optional[dict]) -> "PainConfig":
@@ -83,6 +96,28 @@ class PainModule:
         ])
         self._scores: Deque[float] = deque(maxlen=max(1, cfg.window))
         self._last_ts: Optional[float] = None
+        self.reset_baseline()
+
+    def reset_baseline(self) -> None:
+        """Start learning the patient's calm baseline again (patient is settled and comfortable)."""
+        self._calib: list = []
+        self.baseline: Optional[float] = None
+        self.baseline_spread: Optional[float] = None
+
+    def personal_threshold(self) -> Optional[float]:
+        if self.baseline is None:
+            return None
+        return min(0.99, self.baseline + max(self.cfg.min_rise, 3.0 * (self.baseline_spread or 0.0)))
+
+    def _learn(self, p: float) -> None:
+        if self.baseline is not None:
+            return
+        self._calib.append(p)
+        n_needed = max(5, int(self.cfg.baseline_s / max(self.cfg.update_every_s, 1e-3)))
+        if len(self._calib) >= n_needed:
+            a = np.asarray(self._calib)
+            self.baseline = float(np.median(a))
+            self.baseline_spread = float(1.4826 * np.median(np.abs(a - self.baseline)))
 
     def process(self, bundle: FrameBundle, roi: Optional[ROIBundle] = None) -> Dict[str, Measurement]:
         now = bundle.ts_mono
@@ -103,14 +138,22 @@ class PainModule:
         with torch.no_grad():
             p = float(torch.sigmoid(self.net(x)).item())
         self._scores.append(p)
+        self._learn(p)
         value = float(np.mean(self._scores))
         # quality: how full the averaging window is x how large the face is (96 px = full credit)
         sqi = (len(self._scores) / self._scores.maxlen) * min(1.0, face_px / 96.0)
+        thr = self.personal_threshold()
+        n_needed = max(5, int(self.cfg.baseline_s / max(self.cfg.update_every_s, 1e-3)))
         return {SOURCE: Measurement(
             value=value, sqi=float(sqi), ts=time.time(), source=SOURCE,
             latency_ms=(time.perf_counter() - t0) * 1000.0,
-            meta={"probability_raw": p, "threshold": self.cfg.threshold,
-                  "pain_detected": bool(value >= self.cfg.threshold), "face_px": face_px,
+            meta={"probability_raw": p, "threshold": thr,
+                  "pain_detected": bool(thr is not None and value >= thr), "face_px": face_px,
+                  "baseline": self.baseline, "baseline_spread": self.baseline_spread,
+                  "baseline_state": "ready" if self.baseline is not None else "learning",
+                  "baseline_progress": 1.0 if self.baseline is not None else len(self._calib) / n_needed,
+                  "rise": (value - self.baseline) if self.baseline is not None else None,
+                  "model_threshold": self.cfg.threshold,
                   "window_n": len(self._scores), "experimental": True,
                   "model": "mobilenet_v3_small", "trained_on": "SynPAIN", "reason": None})}
 

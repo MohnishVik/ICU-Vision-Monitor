@@ -39,20 +39,45 @@ def _rr():
     return RRModule(cfg, depth_fs=FS), cfg
 
 
-def test_rr_reports_motion_and_recovers_with_a_clean_window():
-    rr, cfg = _rr()
+def _run_rr(level_at, seconds=90, jitter_at=None):
+    """Feed the RR module a 15 br/min chest; level_at(ts) gives posture (mm), jitter_at(ts)
+    True means the patient is moving about (large random depth changes)."""
+    rr, _ = _rr()
+    rng = np.random.default_rng(1)
     depth = np.zeros((48, 64), np.uint16)
     rgb = np.zeros((48, 64, 3), np.uint8)
-    reasons, values = [], []
-    for i in range(int(70 * FS)):
+    out_rows = []
+    for i in range(int(seconds * FS)):
         ts = i / FS
-        level = 1200 if ts < 30 else 1050                    # patient shifts at 30 s
-        depth[:] = int(level + 6 * np.sin(2 * np.pi * 0.25 * ts))   # 15 br/min
-        out = rr.process(FrameBundle(rgb=rgb, depth=depth, ir=None, thermal=None, ts_mono=ts))
-        m = out.get("rr.depth")
+        z = level_at(ts) + 6 * np.sin(2 * np.pi * 0.25 * ts)
+        if jitter_at is not None and jitter_at(ts):
+            z += rng.uniform(-120, 120)
+        depth[:] = int(z)
+        m = rr.process(FrameBundle(rgb=rgb, depth=depth, ir=None, thermal=None, ts_mono=ts)).get("rr.depth")
         if m is not None:
-            reasons.append((ts, m.meta.get("reason")))
-            values.append((ts, m.value))
-    assert any(r == "motion" and 30 <= ts <= 52 for ts, r in reasons)
-    late = [v for ts, v in values if ts > 55 and v is not None]
-    assert late and abs(np.median(late) - 15.0) < 1.0      # clean window after the shift
+            out_rows.append((ts, m.value, m.meta.get("reason")))
+    return out_rows
+
+
+def test_brief_shift_keeps_the_breathing_reading():
+    rows = _run_rr(lambda ts: 1200 if ts < 30 else 1050)          # leans 15 cm closer at 30 s
+    after = [(ts, v) for ts, v, _ in rows if 30 <= ts <= 60]
+    assert all(v is not None for _, v in after), "reading dropped after a brief shift"
+    assert abs(np.median([v for _, v in after]) - 15.0) < 1.0
+    assert not any(r == "motion" for _, _, r in rows)
+
+
+def test_frequent_shifts_no_longer_blank_breathing():
+    # shifts every 15 s: the old restart-on-movement never filled a 20 s window again
+    rows = _run_rr(lambda ts: 1200 + 60 * (int(ts // 15) % 2))
+    late = [v for ts, v, _ in rows if ts > 40]
+    shown = [v for v in late if v is not None]
+    assert len(shown) >= 0.8 * len(late)
+    assert abs(np.median(shown) - 15.0) < 1.0
+
+
+def test_sustained_movement_reports_motion_then_recovers():
+    rows = _run_rr(lambda ts: 1200, seconds=80, jitter_at=lambda ts: 30 <= ts < 38)  # 8 s moving
+    assert any(r == "motion" and 30 <= ts <= 60 for ts, _, r in rows)
+    late = [v for ts, v, _ in rows if ts > 65 and v is not None]
+    assert late and abs(np.median(late) - 15.0) < 1.0

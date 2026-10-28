@@ -202,13 +202,13 @@ class VitalsPipeline:
         taa_flag = bool(taa_m is not None and taa_m.meta.get("taa_flag"))
 
         if rr_new:
-            self._rr_out = fuse([self._fresh(s, now) for s in self.RR_SOURCES], "rr.fused", self.rr_fuse)
+            self._rr_out = fuse(self._fusable(self.RR_SOURCES, now), "rr.fused", self.rr_fuse)
             self._rr_k = self.rr_kf.update(now, self._rr_out.value, self._rr_out.sqi, taa_active=taa_flag)
             self.rr_trend.add(now, self._rr_k)
             self.watch.observe(Measurement(self._rr_k, 1.0, now, "rr", 0.0) if self._rr_k is not None
                                else None, now)
         if hr_new:
-            self._hr_out = fuse([self._fresh(s, now) for s in self.HR_SOURCES], "hr.fused", self.hr_fuse)
+            self._hr_out = fuse(self._fusable(self.HR_SOURCES, now), "hr.fused", self.hr_fuse)
             self._hr_k = self.hr_kf.update(now, self._hr_out.value, self._hr_out.sqi)
             self.hr_trend.add(now, self._hr_k)
             self.watch.observe(Measurement(self._hr_k, 1.0, now, "hr", 0.0) if self._hr_k is not None
@@ -326,6 +326,22 @@ class VitalsPipeline:
             return None
         return m
 
+    @staticmethod
+    def _may_fuse(src: str, m: Optional[Measurement]) -> bool:
+        """
+        Thermal RR joins the fused value only while it reads the nostrils (camera aligned).
+        Without alignment it falls back to the warmest spot in the image, usually the
+        forehead, which does not move with breathing: its "rate" is noise, and as an equal
+        fused path it made rr.depth and it disagree and blanked the breathing rate. It is
+        still shown on the bed page, marked "Shown only", until the camera is aligned.
+        """
+        if src == "rr.thermal" and m is not None:
+            return (m.meta or {}).get("roi") == "nostril"
+        return True
+
+    def _fusable(self, sources, now: float):
+        return [m if self._may_fuse(s, m) else None for s in sources for m in [self._fresh(s, now)]]
+
     def _vital_dict(self, key: str, value: Optional[float], fused: Optional[Measurement],
                     sources, now: float, ews, extra: Optional[dict] = None) -> dict:
         age = self.watch.age(key, now)
@@ -340,8 +356,10 @@ class VitalsPipeline:
             "reason": (fused.meta.get("reason") if fused is not None and fused.value is None
                        else (None if fused is not None else "warming_up")),
             "subscore": ews.subscores.get(key),
-            "sources": {s: {**d, "role": "fused" if s in fused_set else "display"}
-                        for s in sources if (d := measurement_dict(self._fresh(s, now))) is not None},
+            "sources": {s: {**d, "role": "fused" if s in fused_set and self._may_fuse(s, m) else "display"}
+                        for s in sources
+                        for m in [self._fresh(s, now)]
+                        if (d := measurement_dict(m)) is not None},
             "learned_fused": bool(fused_set & set(self.RR_LEARNED + self.HR_LEARNED)),
             **(extra or {}),
         }
@@ -380,6 +398,8 @@ class VitalsPipeline:
         return {"available": True, "experimental": True, "probability": m.value,
                 "probability_raw": meta.get("probability_raw"), "threshold": meta.get("threshold"),
                 "pain_detected": bool(meta.get("pain_detected")) if m.value is not None else None,
+                "baseline": meta.get("baseline"), "baseline_state": meta.get("baseline_state"),
+                "baseline_progress": meta.get("baseline_progress"), "rise": meta.get("rise"),
                 "sqi": float(m.sqi), "stale": False, "reason": meta.get("reason"),
                 "model": meta.get("model", "mobilenet_v3_small"),
                 "trained_on": meta.get("trained_on", "SynPAIN"), "state": mod.get("state", "ok")}

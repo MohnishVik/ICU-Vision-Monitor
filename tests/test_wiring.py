@@ -23,6 +23,25 @@ def _scene():
     return SceneInfo(has_patient=True, in_chair_frac=1.0, calibrated=True)
 
 
+def test_unaligned_thermal_cannot_blank_the_breathing_rate():
+    # the bed-page screenshot: depth 15, thermal reading the forehead ("warmest spot") 7.7
+    p = _pipeline()
+    p.step(time.time(), {"rr.depth": _m("rr.depth", 15.0),
+                         "rr.thermal": _m("rr.thermal", 7.7, roi="warmest_patch")}, _scene())
+    rr = p.snapshot()["vitals"]["rr"]
+    assert rr["raw"] == 15.0 and rr["reason"] is None
+    assert rr["sources"]["rr.thermal"]["role"] == "display"
+
+
+def test_aligned_thermal_is_fused():
+    p = _pipeline()
+    p.step(time.time(), {"rr.depth": _m("rr.depth", 15.0),
+                         "rr.thermal": _m("rr.thermal", 16.0, roi="nostril")}, _scene())
+    rr = p.snapshot()["vitals"]["rr"]
+    assert 15.0 < rr["raw"] < 16.0
+    assert rr["sources"]["rr.thermal"]["role"] == "fused"
+
+
 def test_learned_rr_is_shown_but_not_fused_by_default():
     p = _pipeline()
     p.step(time.time(), {"rr.depth": _m("rr.depth", 15.0), "rr.cnn_lbrd": _m("rr.cnn_lbrd", 15.9,

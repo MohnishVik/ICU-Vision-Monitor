@@ -54,7 +54,10 @@ function Row({ src, snap, vital }: { src: string; snap: PatientSnapshot; vital: 
       <td>
         <Tip term={fused ? 'fused' : 'shownOnly'} className={`chip ${fused ? '' : 'border-dashed'}`}
              content={fused && info?.learned ? 'As a learned model it is a secondary path: dropped for any second in which it '
-               + 'disagrees with the signal-processing reading.' : undefined}>
+               + 'disagrees with the signal-processing reading.'
+               : !fused && src === 'rr.thermal' ? 'Not used in the breathing rate yet: without alignment the thermal camera '
+               + 'reads the warmest spot (usually the forehead), which does not move with breathing. Use "Align thermal" on '
+               + 'this page; once it reads the nostrils it joins the fused value.' : undefined}>
           {fused ? <><Layers aria-hidden />Fused</> : 'Shown only'}
         </Tip>
       </td>

@@ -197,7 +197,7 @@ and removed false readings caused by the patient settling into the chair.
 | Heart Rate | POS rPPG on skin-masked face colour | none | Running |
 | Fall Detection | YOLOv8n-pose → kinematics → state machine + GRU classifier → hybrid confirmation gate | `yolov8n-pose.pt`, `fall_gru_pseudo.pt` | Running |
 | Breathing synchrony (TAA) | Hilbert phase difference, chest vs abdomen depth | none | Running |
-| Pain Assessment | MobileNetV3-Small on the face crop, notebook eval transform reproduced exactly, 5-s average, threshold 0.2962 | `pain_mobilenetv3_synpain.pth` | Running, **experimental** (never alarms) |
+| Pain Assessment | MobileNetV3-Small on the face crop, notebook eval transform reproduced exactly, 5-s average, read against the patient's own calm baseline (learned over the first 60 s of face, or on "Set calm baseline") | `pain_mobilenetv3_synpain.pth` | Running, **experimental** (never alarms) |
 | Learned RR | `Resp1DCNN` on 10 s of whole-frame green (LBRD-IC) and on 10 s of chest depth (D435 fine-tune) | `rr_cnn1d_lbrdic.pth`, `rr_cnn1d_d435_finetuned.pth` | Running, **experimental**; LBRD-IC fused as secondary, D435 shown only |
 | Learned HR | EfficientPhys on 72×72 face frames, 72-frame chunks, Welch peak | `hr_efficientphys_ubfc.pth` | Running, **experimental**, fused as secondary |
 
@@ -627,7 +627,10 @@ bash deploy/setup_jetson.sh          # swap, max performance mode, dependencies 
 | "Could not open the D435" | Use a USB 3 port and cable; close other apps using the camera; it retries every 5 s |
 | Pose tracking "Not available: Weights not found" | Put `yolov8n-pose.pt` in `models/public/` and make sure `ultralytics` is installed |
 | Fall detection "Not available: Weights missing" | Put `fall_gru_pseudo.pt` in `models/public/` |
-| "Thermal camera offline" | Power the ESP32, join its Wi-Fi, run `python scripts/scan_esp32.py`; RR continues from depth alone |
+| "Thermal camera offline" | Power the ESP32 and join its `WSThermal` Wi-Fi. The monitor only ever requests `waveshare_thermal.endpoint` from `camera.yaml`, paced to 10 Hz with back-off, because bursts of requests to other paths crash the board (RAM). Run `python scripts/scan_esp32.py` only after new firmware: it spaces its requests and closes each connection. RR continues from depth alone |
+| Thermal reading marked "Shown only" | Not aligned yet: it reads the warmest spot (usually the forehead), so it is kept out of the breathing rate. Align it from the bed page |
+| Breathing shows "Patient moving" | Only after more than 4 s of continuous movement; shorter shifts are bridged and the reading continues |
+| Pain card says "Learning this patient's calm face" | Normal for the first minute with the face in view. Press **Set calm baseline** when the patient is settled; a baseline learned during pain would hide it |
 | Thermal panel says "Not aligned yet" | Run the one-time alignment from the bed page |
 | "Face blur unavailable: pose model not loaded" | Add the pose weights; blurring needs the face keypoints |
 | Page says "The dashboard has not been built yet" | `cd frontend && npm ci && npm run build` |

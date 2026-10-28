@@ -230,7 +230,7 @@ export default function PatientDetail() {
       <div className="grid gap-5 lg:grid-cols-3">
         <FallDetectorPanel fall={snap.fall} scene={snap.scene} history={history} />
         <TAAPanel taa={snap.taa} />
-        <PainPanel pain={snap.pain} />
+        <PainPanel pain={snap.pain} patientId={snap.patient_id} />
       </div>
 
       <section className="card card-pad flex flex-col gap-2" aria-labelledby="mods-h">

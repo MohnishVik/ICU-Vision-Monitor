@@ -31,10 +31,19 @@ BGR (bgr8 from the D435). HR expects BGR and swaps channels itself.
 
 ANATOMY FROM COCO-17 KEYPOINTS
 ------------------------------
-Shoulders (5, 6) and hips (11, 12) frame the torso. Chest = its upper half,
-abdomen = its lower half, face = the head keypoints (0-4). When those points
-are missing or low-confidence we fall back to fixed fractions of the person's
-bounding box, so a module always receives a usable (if coarser) window.
+The chest window is anchored on the SHOULDERS only: the sternum region, inset from
+the shoulder points and as tall as ~0.55 shoulder widths. It used to span shoulders
+to hips, but a patient sitting close to the camera, behind a table or under a blanket
+often has hips at the image edge or hidden; their confidence flickers, and every
+flicker switched the box between two very different shapes. The mean depth then
+jumped, which looked like movement and restarted the breathing window. The abdomen
+window sits below the chest, down to the hips when they are seen. The face window
+comes from the head keypoints (0-4). With too few keypoints we fall back to fixed
+fractions of the person's bounding box.
+
+Every window is smoothed by a BoxStabilizer (moving average + hold), because pose
+keypoints wobble a few pixels each frame and a box that follows them changes which
+pixels are averaged in every frame, which is noise the vital signs then have to fight.
 """
 from __future__ import annotations
 
@@ -75,6 +84,11 @@ class ROIGeometryConfig:
     face_pad: float = 0.45
     chest_x_pad: float = 0.15
     abd_x_pad: float = 0.10
+    chest_inset: float = 0.12       # chest window inset from each shoulder (fraction of width)
+    chest_top: float = 0.08         # starts this far below the shoulder line (x shoulder width)
+    chest_height: float = 0.55      # height in shoulder widths
+    abd_height: float = 0.55        # abdomen height when hips are not seen
+    stabilize: bool = True
     # bbox-fraction fallbacks (top, bottom) along the person's height
     face_frac: tuple[float, float] = (0.00, 0.22)
     chest_frac: tuple[float, float] = (0.22, 0.52)
@@ -107,6 +121,47 @@ def _clamp_box(x1: float, y1: float, x2: float, y2: float,
     return x1, y1, x2, y2
 
 
+class BoxStabilizer:
+    """
+    Keep a pixel box steady despite keypoint jitter: centre and size follow an
+    exponential moving average, and the integer box only moves once the smoothed
+    centre has drifted move_frac of the box size (or the size changed by more than
+    that). A jump bigger than snap_frac of the box (the patient really moved) is
+    followed at once.
+    """
+
+    def __init__(self, alpha: float = 0.2, move_frac: float = 0.06, snap_frac: float = 0.35):
+        self.alpha, self.move_frac, self.snap_frac = alpha, move_frac, snap_frac
+        self.reset()
+
+    def reset(self) -> None:
+        self._c = self._s = None
+        self._box: Optional[tuple[int, int, int, int]] = None
+
+    def update(self, box, w: int, h: int):
+        if box is None:
+            self.reset()
+            return None
+        c = np.array([(box[0] + box[2]) / 2.0, (box[1] + box[3]) / 2.0])
+        s = np.array([float(box[2] - box[0]), float(box[3] - box[1])])
+        if self._c is None or np.abs(c - self._c).max() > self.snap_frac * max(1.0, s.max()):
+            self._c, self._s = c, s
+            self._box = _clamp_box(c[0] - s[0] / 2, c[1] - s[1] / 2, c[0] + s[0] / 2, c[1] + s[1] / 2, w, h)
+            return self._box
+        self._c = self._c + self.alpha * (c - self._c)
+        self._s = self._s + self.alpha * (s - self._s)
+        held = self._box
+        if held is not None:
+            hc = np.array([(held[0] + held[2]) / 2.0, (held[1] + held[3]) / 2.0])
+            hs = np.array([held[2] - held[0], held[3] - held[1]], float)
+            tol = self.move_frac * max(1.0, hs.max())
+            if np.abs(self._c - hc).max() < tol and np.abs(self._s - hs).max() < tol:
+                return held
+        self._box = _clamp_box(self._c[0] - self._s[0] / 2, self._c[1] - self._s[1] / 2,
+                               self._c[0] + self._s[0] / 2, self._c[1] + self._s[1] / 2, w, h)
+        return self._box
+
+
 def _confident(kpts: np.ndarray, confs: np.ndarray, idxs, conf_min: float):
     pts = []
     for i in idxs:
@@ -127,6 +182,21 @@ class ROIBuilder:
         # thermal<->RGB alignment; when set, RR reads temperature at the nostrils
         self.thermal_reg = thermal_reg
         self._troi_stab = RoiStabilizer()
+        self._stab = {k: BoxStabilizer() for k in ("face", "chest", "abdomen")}
+
+    def _steady(self, key: str, box, w: int, h: int):
+        return self._stab[key].update(box, w, h) if self.cfg.stabilize else box
+
+    def _chest_box(self, kpts, confs, bbox, w, h):
+        """Sternum window below the shoulder line, sized by shoulder width (hips not needed)."""
+        sh = _confident(kpts, confs, (_L_SH, _R_SH), self.cfg.conf_min)
+        if len(sh) == 2:
+            (xa, ya), (xb, yb) = sorted(sh)
+            sw = max(20.0, xb - xa)
+            top = (ya + yb) / 2.0 + self.cfg.chest_top * sw
+            return _clamp_box(xa + self.cfg.chest_inset * sw, top,
+                              xb - self.cfg.chest_inset * sw, top + self.cfg.chest_height * sw, w, h)
+        return self._bbox_frac_box(bbox, self.cfg.chest_frac, w, h)
 
     # -- region geometry --------------------------------------------------- #
     def _face_box(self, kpts, confs, bbox, w, h):
@@ -216,12 +286,10 @@ class ROIBuilder:
         p = track.person
         kpts, confs, bbox = p.keypoints, p.keypoints_conf, p.bbox
 
-        face_box = self._face_box(kpts, confs, bbox, w, h)
-        chest_box = self._torso_box(
-            kpts, confs, bbox, (_L_SH, _R_SH),
-            (_L_HIP, _R_HIP), self.cfg.chest_x_pad, self.cfg.chest_frac, w, h)
-        # abdomen: between the chest's lower edge and the hips
-        abd_box = self._abdomen_box(kpts, confs, bbox, chest_box, w, h)
+        face_box = self._steady("face", self._face_box(kpts, confs, bbox, w, h), w, h)
+        chest_box = self._steady("chest", self._chest_box(kpts, confs, bbox, w, h), w, h)
+        # abdomen: from the chest's lower edge down to the hips (or a fixed height)
+        abd_box = self._steady("abdomen", self._abdomen_box(kpts, confs, bbox, chest_box, w, h), w, h)
         # nostril/mouth box in RGB, and the matching thermal pixels when aligned
         nostril = nostril_box_rgb(kpts, confs, self.cfg.conf_min)
         thermal_roi = self._troi_stab.update(
@@ -249,18 +317,18 @@ class ROIBuilder:
         )
 
     def _abdomen_box(self, kpts, confs, bbox, chest_box, w, h):
-        sh = _confident(kpts, confs, (_L_SH, _R_SH), self.cfg.conf_min)
+        """Below the chest window: down to the hips if seen, else a fixed height."""
+        if chest_box is None:
+            return self._bbox_frac_box(bbox, self.cfg.abd_frac, w, h)
+        x1, _, x2, y_top = chest_box
+        cw = max(10.0, x2 - x1)
         hp = _confident(kpts, confs, (_L_HIP, _R_HIP), self.cfg.conf_min)
-        if len(sh) >= 1 and len(hp) >= 1:
-            mid_y = (np.mean([p[1] for p in sh]) + np.mean([p[1] for p in hp])) / 2.0
-            hp_y = np.mean([p[1] for p in hp])
-            xs = [p[0] for p in hp]
-            x1, x2 = min(xs), max(xs)
-            pad = max(8.0, (x2 - x1) * self.cfg.abd_x_pad)
-            # extend a little below the hips to capture belly rise
-            span = max(10.0, hp_y - mid_y)
-            return _clamp_box(x1 - pad, mid_y, x2 + pad, hp_y + 0.3 * span, w, h)
-        return self._bbox_frac_box(bbox, self.cfg.abd_frac, w, h)
+        bottom = y_top + self.cfg.abd_height * cw / (1.0 - 2 * self.cfg.chest_inset)
+        if hp:
+            bottom = min(bottom, float(np.mean([p[1] for p in hp])))
+        if bottom - y_top < 6:
+            return None
+        return _clamp_box(x1, y_top, x2, bottom, w, h)
 
 
 def load_roi_builder(

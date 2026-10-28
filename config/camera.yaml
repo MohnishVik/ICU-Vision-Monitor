@@ -52,7 +52,11 @@ waveshare_thermal:
   raw_dtype: int16
   celsius_scale: 100.0         # divide raw int16 by 100.0 to get Celsius
   timeout_s: 2.0
-  retry_delay_s: 1.0
+  retry_delay_s: 1.0           # first wait after a failed request; doubles up to max_backoff_s
+  max_backoff_s: 5.0
+  max_poll_hz: 10              # the sensor makes ~8 frames/s; faster polling only loads the ESP32
+  # Only `endpoint` is ever requested while monitoring. To find it on new firmware run
+  # scripts/scan_esp32.py once (it spaces its requests so the board does not run out of RAM).
   display_colormap: COLORMAP_INFERNO
   # Homography to register thermal (62x80) -> RGB (480x640) space
   # Run scripts/calibrate_thermal.py once to compute and paste here
@@ -62,4 +66,6 @@ waveshare_thermal:
 sync:
   tolerance_ms: 33             # max allowed timestamp gap between streams
   ring_buffer_size: 64         # frames held per stream in ring buffer
-  thermal_max_age_ms: 250      # newest thermal frame is attached only if <= this old (2 thermal frames)
+  thermal_max_age_ms: 600      # newest thermal frame is attached only if <= this old. Over the
+                               # ESP32's Wi-Fi frames can arrive 3-5 per second; 250 ms dropped
+                               # most of them. Breathing changes over seconds, so 0.6 s is fine.

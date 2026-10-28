@@ -148,6 +148,15 @@ def build_api_router(manager: EngineManager) -> APIRouter:
         except RuntimeError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from None
 
+    @r.post("/patients/{patient_id}/pain/baseline")
+    def pain_baseline(patient_id: str) -> dict:
+        """Relearn the calm pain-expression baseline (press when the patient is settled)."""
+        src = _source(manager, patient_id)
+        try:
+            return src.reset_pain_baseline()
+        except RuntimeError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from None
+
     @r.get("/session-event-kinds")
     def session_event_kinds() -> dict:
         from src.serving.session_log import EVENT_KINDS

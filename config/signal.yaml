@@ -15,7 +15,8 @@ rr:
     min_valid_depth_units: 5
     min_valid_pixels: 30
     body_band_mm: 150            # average only chest pixels within this of the median (drops wall/chair)
-    motion_mm: 20                # half-second depth step that means the patient moved -> window restarts
+    motion_mm: 20                # half-second depth step that means the patient moved
+    motion_max_hold_s: 4         # shorter movements are bridged (reading continues); longer restart the window
     window_s: 30
     update_every_s: 1.0
     min_fill_s: 20
@@ -64,6 +65,7 @@ hr:
     min_fill_s: 10
     band_hz: [0.67, 3.0]         # 40-180 BPM
     motion_rel: 0.05             # half-second skin-brightness step (5 %) that means movement
+    motion_max_hold_s: 3         # shorter movements are bridged; longer restart the window
     low_light_luma: 60           # face darker than this (0-255) -> "Face too dark" when rejected
     bandpass_order: 2
     psd: { window: hann, nfft: 16384 }
@@ -128,10 +130,13 @@ fall:
 # MobileNetV3-Small trained in SynPain.ipynb. Shown as a probability; never scored or alarmed on.
 pain:
   weights: "models/public/pain_mobilenetv3_synpain.pth"
-  threshold: 0.2962          # F1-optimal on SynPAIN validation (training metadata)
+  threshold: 0.2962          # model's own cut-off (SynPAIN); reported only - real faces score far above it,
+                             # so detection uses the patient's calm baseline instead (src/modules/pain.py)
   update_every_s: 1.0
   window: 5                  # scores averaged into the displayed probability
   min_face_px: 40
+  baseline_s: 60             # seconds of visible face that teach the patient's calm level
+  min_rise: 0.10             # flag only a rise of at least this above the calm level
   device: "auto"
 
 # ─────────────────────── Learned RR / HR (EXPERIMENTAL) ───────────────────────

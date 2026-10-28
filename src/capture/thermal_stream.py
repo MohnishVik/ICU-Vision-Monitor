@@ -8,55 +8,38 @@ Hardware confirmed:
   Celsius: raw_int16 / 100.0  (e.g. 3103 -> 31.03 C)
   AP SSID: WSThermal
 
-Endpoint auto-discovery:
-  On first start, tries the cached endpoint from camera.yaml.
-  If it fails, scans all known endpoints automatically.
-  Writes the working endpoint back to camera.yaml (targeted line replace —
-  preserves all comments and formatting).
-  If nothing works, thermal=None propagates — all consumers handle this.
+Why this reader is deliberately gentle
+  The ESP32-S3 has little RAM. Earlier versions, whenever one request to the frame
+  endpoint failed, fired requests at a dozen other paths back to back over a kept-alive
+  connection (and repeated that every 10 s). Each unknown path makes the board look the
+  file up and buffer a reply; a burst of them exhausts its RAM and the board powers off,
+  which then looks like "thermal camera not connected" for the rest of the session.
+
+  So, like Camera_Configurations/test_waveshare_thermal.py (the reader that works):
+    - only ONE endpoint is ever requested: camera.yaml -> waveshare_thermal.endpoint.
+      Finding the endpoint is a one-off job for scripts/scan_esp32.py, which closes the
+      connection after every request and waits between them.
+    - one persistent session while frames flow (no new socket per frame);
+    - polls are paced to max_poll_hz (the sensor makes ~8 frames/s; asking faster only
+      makes the board send the same frame twice);
+    - after a failure the session is closed and rebuilt (a board that rebooted leaves
+      the old socket dead) and the wait grows from retry_delay_s to max_backoff_s, so an
+      unreachable board is never hammered.
+
+If nothing answers, thermal=None propagates; every consumer handles that.
 """
 
 from __future__ import annotations
-import re
 import threading
 import time
-from pathlib import Path
 
 import numpy as np
 import requests
-import yaml
-
-
-# All endpoints to try during auto-discovery, in priority order
-_SCAN_ENDPOINTS = [
-    "/thermal/frame",     # confirmed working — tried first
-    "/thermal/raw",
-    "/thermal",
-    "/thermal/",
-    "/raw",
-    "/stream",
-    "/capture",
-    "/",
-    "/index.html",
-    "/debug",
-    "/thermal/debug",
-    "/status",
-]
-
-_CAMERA_YAML = Path("config/camera.yaml")
 
 
 class ThermalStream:
     """
     Background-thread HTTP poller for the Waveshare ESP32-S3 thermal camera.
-
-    On first start:
-      1. Tries the cached endpoint from camera.yaml.
-      2. If that fails, scans all known endpoints automatically.
-      3. Writes the working endpoint back to camera.yaml (line-targeted replace).
-      4. If nothing works, runs without thermal (thermal=None everywhere).
-
-    The latest decoded frame is available via get_latest_frame().
 
     Usage:
         stream = ThermalStream(cfg)
@@ -70,85 +53,54 @@ class ThermalStream:
     EXPECTED_BYTES = FRAME_WIDTH * FRAME_HEIGHT * 2   # 9920
     CELSIUS_SCALE  = 100.0
 
-    def __init__(self, cfg: dict, config_path: Path = _CAMERA_YAML):
+    def __init__(self, cfg: dict, session_factory=requests.Session):
         """
         Args:
-            cfg:         the waveshare_thermal sub-dict from camera.yaml
-            config_path: path to camera.yaml for endpoint write-back
+            cfg: the waveshare_thermal sub-dict from camera.yaml
+            session_factory: builds the HTTP session (replaceable in tests)
         """
-        self.cfg         = cfg
-        self.config_path = config_path
-        self.base_ip     = cfg.get("base_ip", "http://192.168.4.1")
-        self.timeout_s   = cfg.get("timeout_s", 2.0)
-        self.retry_s     = cfg.get("retry_delay_s", 1.0)
-        self.rediscover_s = float(cfg.get("rediscover_s", 10.0))   # while no endpoint answers
-
-        # Active endpoint — resolved during start()
-        self._endpoint: str | None = cfg.get("endpoint", "/thermal/frame")
-        self._url: str | None = None
+        self.cfg = cfg
+        base = str(cfg.get("base_ip", "http://192.168.4.1")).rstrip("/")
+        endpoint = str(cfg.get("endpoint") or "/thermal/frame")
+        self.url = cfg.get("full_url") or f"{base}{endpoint if endpoint.startswith('/') else '/' + endpoint}"
+        self.timeout_s = float(cfg.get("timeout_s", 2.0))
+        self.retry_s = float(cfg.get("retry_delay_s", 1.0))
+        self.max_backoff_s = float(cfg.get("max_backoff_s", 5.0))
+        self.min_interval_s = 1.0 / max(0.5, float(cfg.get("max_poll_hz", 10.0)))
+        self._session_factory = session_factory
 
         self._latest_frame: np.ndarray | None = None
         self._latest_ts:    float | None      = None
         self._lock    = threading.Lock()
         self._running = False
-        self._wake    = threading.Event()        # interrupts the rediscovery wait on stop()
+        self._wake    = threading.Event()        # interrupts waits on stop()
         self._thread: threading.Thread | None = None
         self._session: requests.Session | None = None
+        self.frames_ok = 0
+        self.failures = 0
 
     # ── lifecycle ──────────────────────────────────────────────────────────────
 
     def start(self) -> None:
-        """
-        Start the background thread and return at once. The thread resolves the
-        working endpoint (cached, then a scan), then polls. With the ESP32 unreachable
-        a scan takes up to ~12 x timeout_s, so it must not hold up the D435 start; if
-        nothing answers, discovery is retried every rediscover_s so a thermal camera
-        that comes up later is picked up without a restart.
-        """
-        self._session = requests.Session()
+        """Start polling in a background thread and return at once."""
         self._running = True
         self._wake.clear()
-        self._thread  = threading.Thread(
-            target=self._run,
-            name="thermal-poll",
-            daemon=True,
-        )
+        self._thread = threading.Thread(target=self._run, name="thermal-poll", daemon=True)
         self._thread.start()
 
-    def _run(self) -> None:
-        warned = False
-        while self._running:
-            working_url = self._resolve_endpoint(verbose=not warned)   # log the scan once
-            if working_url is not None or not self._running:
-                break
-            if not warned:
-                print("[Thermal] WARN: no working endpoint found. Continuing without thermal; "
-                      f"retrying discovery every {self.rediscover_s:.0f} s.")
-                warned = True
-            self._wake.wait(self.rediscover_s)
-        if not self._running:
-            return
-        self._url = working_url
-        print(f"[Thermal] Polling started -> {self._url}")
-        self._poll_loop()
-
     def stop(self) -> None:
-        """Stop background thread and close HTTP session."""
+        """Stop the background thread and close the HTTP session."""
         self._running = False
         self._wake.set()
         if self._thread:
-            self._thread.join(timeout=3.0)
-        if self._session:
-            self._session.close()
+            self._thread.join(timeout=self.timeout_s + 1.0)
+        self._close_session()
         print("[Thermal] Stream stopped.")
 
     # ── public API ─────────────────────────────────────────────────────────────
 
     def get_latest_frame(self) -> tuple[np.ndarray | None, float | None]:
-        """
-        Returns the most recent thermal frame and its monotonic timestamp.
-        Returns (None, None) when ESP32 is offline or stream not started.
-        """
+        """Most recent frame and its monotonic timestamp, or (None, None)."""
         with self._lock:
             if self._latest_frame is None:
                 return None, None
@@ -157,149 +109,68 @@ class ThermalStream:
     def is_online(self) -> bool:
         """True if a valid frame was received within the last 3 seconds."""
         with self._lock:
-            if self._latest_ts is None:
-                return False
-            return (time.monotonic() - self._latest_ts) < 3.0
-
-    # ── endpoint resolution ────────────────────────────────────────────────────
-
-    def _resolve_endpoint(self, verbose: bool = True) -> str | None:
-        """
-        Try cached endpoint first. If it fails, scan all known endpoints.
-        Writes the winner back to camera.yaml (targeted line replace).
-
-        Returns:
-            Full working URL string, or None if nothing responds.
-        """
-        # 1. Try cached endpoint first
-        cached = self._endpoint or "/thermal/frame"
-        cached_url = f"{self.base_ip}{cached}"
-
-        if self._probe(cached_url):
-            print(f"[Thermal] Endpoint OK (cached): {cached_url}")
-            return cached_url
-
-        # 2. Cached endpoint failed — auto-scan
-        if verbose:
-            print(f"[Thermal] Cached endpoint {cached_url!r} not responding. "
-                  "Auto-scanning endpoints...")
-
-        for path in _SCAN_ENDPOINTS:
-            if not self._running:
-                return None   # stop() was called mid-scan
-            if path == cached:
-                continue   # already tried
-            url = f"{self.base_ip}{path}"
-            if self._probe(url):
-                print(f"[Thermal] Found working endpoint: {url}")
-                self._write_endpoint_to_yaml(path)
-                return url
-
-        return None   # nothing worked
-
-    def _probe(self, url: str) -> bool:
-        """
-        Try one HTTP GET. Returns True only if status=200 AND
-        payload is exactly EXPECTED_BYTES (9920).
-        Pure byte-count check — no decoding needed here.
-        """
-        try:
-            r = self._session.get(url, timeout=self.timeout_s)
-            return r.status_code == 200 and len(r.content) == self.EXPECTED_BYTES
-        except requests.exceptions.RequestException:
-            return False
-
-    def _write_endpoint_to_yaml(self, new_endpoint: str) -> None:
-        """
-        Update only the `endpoint:` line in camera.yaml.
-        All comments, whitespace, and other values are preserved exactly.
-
-        Strategy: read the file as plain text, replace just the matching line
-        with a regex targeted at the endpoint key, write back.
-        """
-        if not self.config_path.exists():
-            print(f"[Thermal] WARN: {self.config_path} not found - "
-                  "endpoint not persisted.")
-            return
-
-        try:
-            text = self.config_path.read_text(encoding="utf-8")
-
-            # Match:  endpoint: "/thermal/frame"   or  endpoint: /thermal/frame
-            # Preserves leading whitespace (indentation inside waveshare_thermal block)
-            pattern = r'^(\s*endpoint:\s*).*$'
-            replacement = rf'\g<1>"{new_endpoint}"'
-            new_text, n = re.subn(pattern, replacement, text, flags=re.MULTILINE)
-
-            if n == 0:
-                print("[Thermal] WARN: could not find 'endpoint:' key in "
-                      f"{self.config_path} - endpoint not persisted.")
-                return
-
-            self.config_path.write_text(new_text, encoding="utf-8")
-            print(f"[Thermal] camera.yaml updated -> endpoint: \"{new_endpoint}\"")
-
-        except OSError as e:
-            print(f"[Thermal] WARN: could not write {self.config_path}: {e}")
+            return self._latest_ts is not None and (time.monotonic() - self._latest_ts) < 3.0
 
     # ── poll loop ──────────────────────────────────────────────────────────────
 
-    def _poll_loop(self) -> None:
-        """
-        Runs in background daemon thread.
-        Persistent HTTP session prevents ESP32 socket exhaustion.
-        On connection loss: retries silently, does NOT clear the last frame
-        (consumers check is_online() if they care about freshness).
-        On repeated failure: attempts endpoint re-discovery once, then keeps retrying.
-        """
-        consecutive_failures = 0
-        rediscovery_done     = False
-
+    def _run(self) -> None:
+        print(f"[Thermal] Polling {self.url} (max {1.0 / self.min_interval_s:.0f} Hz)")
+        backoff = self.retry_s
+        was_online = False
         while self._running:
+            t0 = time.monotonic()
+            ok = self._poll_once()
+            if ok:
+                if not was_online:
+                    print("[Thermal] Frames arriving.")
+                was_online, backoff = True, self.retry_s
+                wait = self.min_interval_s - (time.monotonic() - t0)
+            else:
+                if was_online:
+                    print(f"[Thermal] WARN: frame request failed; retrying {self.url} with back-off.")
+                was_online = False
+                self._close_session()                # a rebooted board leaves the socket dead
+                wait, backoff = backoff, min(self.max_backoff_s, backoff * 2)
+            if wait > 0:
+                self._wake.wait(wait)
+
+    def _poll_once(self) -> bool:
+        if self._session is None:
+            self._session = self._session_factory()
+        try:
+            r = self._session.get(self.url, timeout=self.timeout_s)
+        except requests.exceptions.RequestException:
+            self.failures += 1
+            return False
+        if r.status_code != 200:
+            self.failures += 1
+            return False
+        frame = self._decode_frame(r.content)
+        if frame is None:
+            self.failures += 1                       # wrong size: wrong endpoint or a cut-off reply
+            return False
+        with self._lock:
+            self._latest_frame, self._latest_ts = frame, time.monotonic()
+        self.frames_ok += 1
+        return True
+
+    def _close_session(self) -> None:
+        s, self._session = self._session, None
+        if s is not None:
             try:
-                response = self._session.get(self._url, timeout=self.timeout_s)
-
-                if response.status_code == 200:
-                    frame = self._decode_frame(response.content)
-                    if frame is not None:
-                        with self._lock:
-                            self._latest_frame = frame
-                            self._latest_ts    = time.monotonic()
-                        consecutive_failures = 0
-                    # else: bad payload length — skip, don't count as failure
-                else:
-                    consecutive_failures += 1
-
-            except requests.exceptions.RequestException:
-                consecutive_failures += 1
-
-            # If we've failed 10 times in a row and haven't retried discovery yet
-            if consecutive_failures >= 10 and not rediscovery_done:
-                print("[Thermal] WARN: 10 consecutive failures. "
-                      "Re-running endpoint discovery...")
-                new_url = self._resolve_endpoint()
-                if new_url and new_url != self._url:
-                    self._url = new_url
-                    print(f"[Thermal] Switched to new endpoint: {self._url}")
-                rediscovery_done     = True
-                consecutive_failures = 0
-
-            if consecutive_failures > 0:
-                time.sleep(self.retry_s)
+                s.close()
+            except Exception:  # noqa: BLE001
+                pass
 
     # ── frame decode ───────────────────────────────────────────────────────────
 
     def _decode_frame(self, raw_bytes: bytes) -> np.ndarray | None:
-        """
-        Decode raw ESP32 binary payload → float32 Celsius matrix (62, 80).
-        Returns None if payload length is wrong.
-        """
+        """Raw ESP32 payload -> float32 Celsius (62, 80); None if the length is wrong."""
         if len(raw_bytes) != self.EXPECTED_BYTES:
             return None
-
-        raw  = np.frombuffer(raw_bytes, dtype=np.int16)
-        mat  = raw.reshape((self.FRAME_HEIGHT, self.FRAME_WIDTH)).astype(np.float32)
-        mat /= self.CELSIUS_SCALE   # e.g. 3103 → 31.03 C
+        raw = np.frombuffer(raw_bytes, dtype=np.int16)
+        mat = raw.reshape((self.FRAME_HEIGHT, self.FRAME_WIDTH)).astype(np.float32)
+        mat /= self.CELSIUS_SCALE
         return mat
 
 
@@ -309,10 +180,7 @@ def make_display_frame(
     thermal_c:    np.ndarray,
     display_size: tuple[int, int] = (640, 480),
 ) -> np.ndarray:
-    """
-    Convert float32 Celsius frame → colourised BGR display image.
-    Uses COLORMAP_INFERNO (matches original test_waveshare_thermal.py).
-    """
+    """Float32 Celsius frame -> colourised BGR display image (COLORMAP_INFERNO)."""
     import cv2
     t_min, t_max = thermal_c.min(), thermal_c.max()
     if t_max > t_min:

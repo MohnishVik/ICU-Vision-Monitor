@@ -21,8 +21,10 @@ Quality
 Motion and light
   A head turn or a hand across the face shifts the skin brightness by several percent in a
   fraction of a second, far more than a heartbeat (well under 1 %). When the half-second
-  mean skin brightness steps by more than motion_rel the window restarts and the module
-  reports value=None with meta["reason"] = "motion" while it refills. When a reading is
+  mean skin brightness steps by more than motion_rel the last good colour is held and,
+  once still, the channels are rescaled to continue where they were (src/modules/motion.py).
+  Only movement longer than motion_max_hold_s restarts the window; while it refills the
+  module reports value=None with meta["reason"] = "motion". When a reading is
   rejected and the face averages below low_light_luma (0-255), the reason is "low_light":
   sensor noise is then larger than the pulse and more light on the face is the fix.
 
@@ -40,7 +42,7 @@ import cv2
 import numpy as np
 import scipy.signal
 
-from src.modules.motion import MotionGate
+from src.modules.motion import MotionBridge, MotionGate
 from src.types import FrameBundle, Measurement, ROIBundle
 
 
@@ -75,6 +77,7 @@ class HRConfig:
     pos: _POSCfg
     quality: _QualityCfg
     motion_rel: float = 0.05            # half-second skin-brightness step that counts as movement
+    motion_max_hold_s: float = 3.0      # bridge movements up to this long; restart after
     low_light_luma: float = 60.0        # face darker than this -> "low_light" when rejected
 
     @classmethod
@@ -99,6 +102,7 @@ class HRConfig:
                                    ("peak_power_frac_min", "peak_power_frac_good",
                                     "peak_half_width_hz")}),
             motion_rel=float(p.get("motion_rel", 0.05)),
+            motion_max_hold_s=float(p.get("motion_max_hold_s", 3.0)),
             low_light_luma=float(p.get("low_light_luma", 60.0)),
         )
 
@@ -270,13 +274,17 @@ class HRModule:
         self._fs = fs
         self._buf = _POSBuffer(cfg=cfg.pos, fs_nominal=fs)
         self._motion = MotionGate(fs, rel_thresh=cfg.motion_rel)
+        self._bridge = MotionBridge(self._motion, mode="mul", max_hold_s=cfg.motion_max_hold_s, trigger=_luma)
+        self._last_rgb_raw: Optional[np.ndarray] = None
         self._last_motion_report = 0.0
 
     def process(self, bundle: FrameBundle, roi: Optional[ROIBundle] = None) -> dict:
         out = self._process(bundle, roi)
         now = bundle.ts_mono
+        buf = self._buf
+        filled = len(buf.ts) >= 4 and buf.ts[-1] - buf.ts[0] >= self.cfg.pos.min_fill_s
         if "hr.pos" not in out and self._motion.recent(now, self.cfg.pos.min_fill_s) \
-                and not self._buf.ready(now) and now - self._last_motion_report >= self.cfg.pos.update_every_s:
+                and not filled and now - self._last_motion_report >= self.cfg.pos.update_every_s:
             # refilling after movement: say so instead of going quiet
             self._last_motion_report = now
             out["hr.pos"] = Measurement(None, 0.0, time.time(), "hr.pos", 0.0, {"reason": "motion"})
@@ -291,16 +299,16 @@ class HRModule:
 
         # 2. Mean skin RGB -> buffer
         rgb_mean = _mean_skin_rgb(face)
-        if rgb_mean is not None and self._motion.update(_luma(rgb_mean), bundle.ts_mono):
-            self._buf = _POSBuffer(cfg=self.cfg.pos, fs_nominal=self._fs)   # restart the window
-            return {}
+        if rgb_mean is None:
+            rgb_mean = self._last_rgb_raw                # brief ROI dropout: repeat the last sample
         if rgb_mean is not None:
-            self._buf.append(rgb_mean, bundle.ts_mono)
-        elif self._buf.ts:
-            # One-sample hold on a brief ROI dropout, same as rr.py
-            self._buf.append(np.array([self._buf.r[-1], self._buf.g[-1], self._buf.b[-1]],
-                                      dtype=np.float32),
-                             bundle.ts_mono)
+            self._last_rgb_raw = rgb_mean
+            items, restart = self._bridge.feed(rgb_mean, bundle.ts_mono)
+            if restart:                                  # moving longer than motion_max_hold_s
+                self._buf = _POSBuffer(cfg=self.cfg.pos, fs_nominal=self._fs)
+                return {}
+            for t_item, value in items:                  # emitted ~0.5 s late (see MotionBridge)
+                self._buf.append(np.asarray(value, dtype=np.float32), t_item)
 
         # 3. Estimate on the configured interval
         if not self._buf.ready(bundle.ts_mono):

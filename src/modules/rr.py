@@ -21,9 +21,11 @@ Quality gate (shared)
 Motion gate (depth path)
   A posture change moves the chest box by tens of millimetres in a fraction of a second,
   more than all the breathing in the window put together. When the half-second mean
-  depth jumps by more than motion_mm (src/modules/motion.py) the window is dropped and
-  refilled once the patient is still; until then the path reports value=None with
-  meta["reason"] = "motion", so the screen says "Patient moving", not "signal too weak".
+  depth jumps by more than motion_mm (src/modules/motion.py) the last good value is held
+  and, once still, the trace is re-baselined to continue where it was, so the window and
+  the reading survive a brief shift. Only movement longer than motion_max_hold_s drops
+  the window; while it refills the path reports value=None with meta["reason"] = "motion",
+  so the screen says "Patient moving", not "signal too weak".
 
 Apnea gate (depth path only, computed before the spectral estimate)
   Compares the amplitude of the recent sub-window against the full window. A sustained
@@ -43,7 +45,7 @@ from typing import Deque, Optional
 import numpy as np
 import scipy.signal
 
-from src.modules.motion import MotionGate
+from src.modules.motion import MotionBridge, MotionGate
 from src.types import FrameBundle, Measurement, ROIBundle
 
 
@@ -91,6 +93,7 @@ class RRConfig:
     min_valid_depth_units: int = 5
     min_valid_pixels: int      = 30
     motion_mm: float           = 20.0      # half-second mean depth step that counts as movement
+    motion_max_hold_s: float   = 4.0       # bridge movements up to this long; restart after
     body_band_mm: Optional[float] = 150.0  # keep chest pixels within this of the median depth
 
     @classmethod
@@ -127,6 +130,7 @@ class RRConfig:
             min_valid_depth_units=int(d.get("min_valid_depth_units", 5)),
             min_valid_pixels=int(d.get("min_valid_pixels", 30)),
             motion_mm=float(d.get("motion_mm", 20.0)),
+            motion_max_hold_s=float(d.get("motion_max_hold_s", 4.0)),
             body_band_mm=(None if d.get("body_band_mm", 150.0) is None else float(d.get("body_band_mm", 150.0))),
         )
 
@@ -161,6 +165,10 @@ class _Path:
         self.sig.clear()
         self.ts.clear()
         self.last_estimate_ts = 0.0
+
+    def filled(self) -> bool:
+        """True when the window holds at least min_fill_s of signal."""
+        return len(self.sig) >= 4 and self.ts[-1] - self.ts[0] >= self.cfg.min_fill_s
 
     def ready(self, now: float) -> bool:
         """True when enough signal exists and the update interval has elapsed."""
@@ -374,6 +382,8 @@ class RRModule:
         self._thermal = _Path(cfg=cfg.thermal, fs_nominal=thermal_fs, source="rr.thermal")
         self._apnea_state = _ApneaState()
         self._depth_motion = MotionGate(depth_fs, abs_thresh=cfg.motion_mm)
+        self._depth_bridge = MotionBridge(self._depth_motion, mode="add", max_hold_s=cfg.motion_max_hold_s)
+        self._last_depth_raw: Optional[float] = None
         self._last_motion_report = 0.0
         self._last_thermal_ts: Optional[float] = None
         self._thermal_src: Optional[str] = None     # "nostril" | "warmest_patch"
@@ -387,7 +397,7 @@ class RRModule:
         self._sample_thermal(bundle, roi, now)
 
         out: dict[str, Measurement] = {}
-        if self._depth_motion.recent(now, self.cfg.depth.min_fill_s) and not self._depth.ready(now) \
+        if self._depth_motion.recent(now, self.cfg.depth.min_fill_s) and not self._depth.filled() \
                 and now - self._last_motion_report >= self.cfg.depth.update_every_s:
             # refilling after movement: say so instead of going quiet
             self._last_motion_report = now
@@ -416,15 +426,19 @@ class RRModule:
 
         mean_z = _mean_from_depth_roi(crop, self.cfg.min_valid_depth_units, self.cfg.min_valid_pixels,
                                       self.cfg.body_band_mm)
-        if mean_z is not None and self._depth_motion.update(mean_z, now):
-            self._depth.reset()                        # movement: start the window again
+        if mean_z is None:
+            # brief dropout: repeat the last raw sample so the buffer does not go stale
+            mean_z = self._last_depth_raw
+            if mean_z is None:
+                return
+        self._last_depth_raw = mean_z
+        items, restart = self._depth_bridge.feed(mean_z, now)
+        if restart:                                    # moving for longer than motion_max_hold_s
+            self._depth.reset()
             self._apnea_state = _ApneaState()
             return
-        if mean_z is not None:
-            self._depth.append(mean_z, now)
-        elif self._depth.sig:
-            # One-sample hold prevents the buffer from going stale during a brief dropout
-            self._depth.append(self._depth.sig[-1], now)
+        for t_item, value in items:                    # emitted ~0.5 s late (see MotionBridge)
+            self._depth.append(value, t_item)
 
     def _sample_thermal(self, bundle: FrameBundle, roi: Optional[ROIBundle], now: float) -> None:
         if bundle.thermal is None or bundle.thermal_ts is None:

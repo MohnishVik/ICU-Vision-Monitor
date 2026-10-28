@@ -8,6 +8,11 @@ Usage:
     python scripts/scan_esp32.py --ip 192.168.4.1
 
 Confirmed active endpoint: /thermal/frame (returns 9920 bytes binary)
+
+Gentle by design (as in Camera_Configurations/scan_esp32.py): every request closes its
+connection ("Connection: close") and the scanner pauses between requests, because back-to-back
+requests to unknown paths exhaust the ESP32-S3's RAM and the board powers off. The confirmed
+endpoint is tried first, so a healthy board answers before anything else is touched.
 """
 
 import argparse
@@ -16,14 +21,16 @@ import time
 
 
 ENDPOINTS = [
+    "/thermal/frame",     # <-- confirmed working, tried first
     "/", "/thermal", "/thermal/", "/thermal/raw",
-    "/thermal/frame",     # <-- confirmed working
     "/raw", "/stream", "/index.html", "/debug",
     "/thermal/debug", "/status", "/capture"
 ]
+CLOSE = {"Connection": "close"}   # never keep a socket open on the ESP32 between requests
+GAP_S = 0.5                       # let the ESP32 free its buffers before the next request
 
 
-def scan_esp32_endpoints(base_ip: str = "http://192.168.4.1") -> list[str]:
+def scan_esp32_endpoints(base_ip: str = "http://192.168.4.1", gap_s: float = GAP_S) -> list[str]:
     print(f"[INFO] Scanning ESP32-S3 HTTP server at {base_ip}...")
     print(f"[INFO] Make sure Windows is connected to 'WSThermal' AP\n")
 
@@ -32,7 +39,7 @@ def scan_esp32_endpoints(base_ip: str = "http://192.168.4.1") -> list[str]:
     for path in ENDPOINTS:
         url = f"{base_ip}{path}"
         try:
-            response = requests.get(url, timeout=2.0)
+            response = requests.get(url, timeout=2.0, headers=CLOSE)
             if response.status_code == 200:
                 content_len = len(response.content)
                 content_preview = response.content[:16].hex() if response.content else ""
@@ -44,6 +51,7 @@ def scan_esp32_endpoints(base_ip: str = "http://192.168.4.1") -> list[str]:
                 print(f"  [{response.status_code}    ] {url}")
         except requests.exceptions.RequestException:
             print(f"  [ERR    ] {url}  (connection failed)")
+        time.sleep(gap_s)
 
     print(f"\n[SUMMARY] {len(active)} working URL(s) found.")
     if active:
@@ -62,7 +70,7 @@ def check_frame_payload(url: str = "http://192.168.4.1/thermal/frame") -> None:
     import numpy as np
     print(f"\n[INFO] Checking payload from {url} ...")
     try:
-        r = requests.get(url, timeout=2.0)
+        r = requests.get(url, timeout=2.0, headers=CLOSE)
         raw = r.content
         print(f"  Status   : {r.status_code}")
         print(f"  Bytes    : {len(raw)}  (expected 9920 = 62*80*2)")
@@ -89,6 +97,7 @@ if __name__ == "__main__":
     active = scan_esp32_endpoints(args.ip)
 
     if args.check_payload and active:
+        time.sleep(GAP_S)
         # Try the confirmed endpoint first
         target = f"{args.ip}/thermal/frame"
         if target in active:

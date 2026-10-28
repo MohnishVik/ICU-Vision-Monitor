@@ -165,6 +165,14 @@ class PatientSource:
             raise RuntimeError("No session is being recorded on this bed.")
         return rec.add_event(kind, value=value, note=note)
 
+    def reset_pain_baseline(self) -> dict:
+        """Relearn the patient's calm pain-expression baseline (src/modules/pain.py)."""
+        mod = getattr(self, "_mods", {}).get("pain")
+        if mod is None or not hasattr(mod, "reset_baseline"):
+            raise RuntimeError("The pain module is not running on this bed.")
+        mod.reset_baseline()
+        return {"baseline_state": "learning"}
+
     def _capture(self, frame: dict) -> None:
         """Hand one frame's model inputs to a capturing session; never breaks the frame loop."""
         rec = self.pipeline.recorder
@@ -1053,11 +1061,22 @@ class DemoEngine(PatientSource):
         target = 0.68 if s["fall"] == 2 else (0.42 if self.scenario == "deteriorating" else 0.14)
         self._pain += 0.15 * (target - self._pain) + g(0, 0.015)
         p = float(min(1.0, max(0.0, self._pain)))
+        learning = now - getattr(self, "_pain_baseline_since", self.t0) < 60.0
+        base = None if learning else 0.14                 # the simulated patient's calm level
+        thr = None if learning else base + 0.10
         raw["pain.mobilenetv3"] = Measurement(p, 0.8, now, "pain.mobilenetv3", 18.0,
-                                              {**exp, "probability_raw": p, "threshold": 0.2962,
-                                               "pain_detected": p >= 0.2962, "face_px": 88,
+                                              {**exp, "probability_raw": p, "threshold": thr,
+                                               "pain_detected": thr is not None and p >= thr, "face_px": 88,
+                                               "baseline": base, "baseline_state": "learning" if learning else "ready",
+                                               "baseline_progress": min(1.0, (now - getattr(
+                                                   self, "_pain_baseline_since", self.t0)) / 60.0),
+                                               "rise": None if base is None else p - base,
                                                "model": "mobilenet_v3_small", "trained_on": "SynPAIN",
                                                "reason": None})
+
+    def reset_pain_baseline(self) -> dict:
+        self._pain_baseline_since = time.time()
+        return {"baseline_state": "learning"}
 
     def _render(self, pose: np.ndarray, staff: float, t: float) -> Optional[bytes]:
         img = self._render_array(pose, staff)
