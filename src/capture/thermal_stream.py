@@ -81,12 +81,15 @@ class ThermalStream:
         self._session: requests.Session | None = None
         self.frames_ok = 0
         self.failures = 0
+        self.last_error: str | None = None       # why the last request failed (shown on the dashboard)
+        self.started_at: float | None = None
 
     # ── lifecycle ──────────────────────────────────────────────────────────────
 
     def start(self) -> None:
         """Start polling in a background thread and return at once."""
         self._running = True
+        self.started_at = time.monotonic()
         self._wake.clear()
         self._thread = threading.Thread(target=self._run, name="thermal-poll", daemon=True)
         self._thread.start()
@@ -113,6 +116,20 @@ class ThermalStream:
         """True if a valid frame was received within the last 3 seconds."""
         with self._lock:
             return self._latest_ts is not None and (time.monotonic() - self._latest_ts) < 3.0
+
+    def link_detail(self) -> str:
+        """One line on the connection state, in plain words, for the dashboard."""
+        if self.is_online():
+            return f"Receiving frames from {self.url}."
+        with self._lock:
+            last = self._latest_ts
+        since = last if last is not None else self.started_at
+        secs = 0 if since is None else int(time.monotonic() - since)
+        why = f" ({self.last_error})" if self.last_error else ""
+        if last is None and self.failures == 0:
+            return f"Connecting to {self.url}..."
+        return (f"No answer from {self.url} for {secs} s{why}. Check the ESP32 is powered and this "
+                f"computer is on its 'WSThermal' Wi-Fi; retrying every {self.max_backoff_s:.0f} s.")
 
     # ── poll loop ──────────────────────────────────────────────────────────────
 
@@ -143,16 +160,22 @@ class ThermalStream:
             session = self._session = self._session_factory()
         try:
             r = session.get(self.url, timeout=self.timeout_s)
-        except Exception:  # noqa: BLE001 - RequestException, or a session closed by stop()
+        except Exception as exc:  # noqa: BLE001 - RequestException, or a session closed by stop()
             self.failures += 1
+            self.last_error = ("timed out" if isinstance(exc, requests.exceptions.Timeout)
+                               else "no connection" if isinstance(exc, requests.exceptions.ConnectionError)
+                               else type(exc).__name__)
             return False
         if r.status_code != 200:
             self.failures += 1
+            self.last_error = f"HTTP {r.status_code}"
             return False
         frame = self._decode_frame(r.content)
         if frame is None:
             self.failures += 1                       # wrong size: wrong endpoint or a cut-off reply
+            self.last_error = f"{len(r.content)} bytes instead of {self.EXPECTED_BYTES}"
             return False
+        self.last_error = None
         with self._lock:
             self._latest_frame, self._latest_ts = frame, time.monotonic()
         self.frames_ok += 1

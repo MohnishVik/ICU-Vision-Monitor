@@ -73,19 +73,22 @@ class D435Stream:
         depth_sensor = device.first_depth_sensor()
         self.depth_scale = depth_sensor.get_depth_scale()
 
-        # High Accuracy preset: the same one record_session.py applied during recording
+        # High Accuracy preset: the same one record_session.py applied during recording.
+        # These writes improve depth but are not required to stream, so a refused write
+        # (old firmware, USB 2 mode) is reported and skipped rather than aborting start().
         preset = depth.get("visual_preset")
         if preset is not None:
-            depth_sensor.set_option(rs.option.visual_preset, preset)
+            self._try(lambda: depth_sensor.set_option(rs.option.visual_preset, preset), "depth preset")
 
         # The IR dot projector gives the two IR cameras texture to match on plain surfaces
         # (gowns, blankets); without it chest depth gets holes and noise. The device keeps
         # whatever another app (e.g. RealSense Viewer) last set, so set it every start.
         if self._supports(depth_sensor, rs.option.emitter_enabled):
-            depth_sensor.set_option(rs.option.emitter_enabled, 1 if depth.get("emitter_enabled", True) else 0)
+            on = 1 if depth.get("emitter_enabled", True) else 0
+            self._try(lambda: depth_sensor.set_option(rs.option.emitter_enabled, on), "IR projector")
         power = depth.get("laser_power")
         if power is not None and self._supports(depth_sensor, rs.option.laser_power):
-            self._set(depth_sensor, rs.option.laser_power, float(power))
+            self._try(lambda: self._set(depth_sensor, rs.option.laser_power, float(power)), "laser power")
 
         color_sensor = self._get_color_sensor(device)
 
@@ -371,6 +374,13 @@ class D435Stream:
             value = rng.min + round((value - rng.min) / rng.step) * rng.step
         sensor.set_option(option, value)
         return value
+
+    @staticmethod
+    def _try(write, what: str) -> None:
+        try:
+            write()
+        except RuntimeError as exc:
+            print(f"[D435] WARN: could not set {what} ({exc}); continuing without it.")
 
     @staticmethod
     def _supports(sensor: rs.sensor, option) -> bool:

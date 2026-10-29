@@ -60,6 +60,38 @@ except Exception:  # pragma: no cover
 
 log = logging.getLogger("visionicu.engine")
 
+
+def d435_hint(message: str) -> str:
+    """What to do about a D435 open error, in plain words (shown in the log and dashboard)."""
+    m = message.lower()
+    if "no device connected" in m or "no device" in m:
+        return ("The D435 is not detected: plug it into a USB 3 port (blue) with the original cable, "
+                "and check it appears in RealSense Viewer, then close the Viewer.")
+    if any(k in m for k in ("busy", "access is denied", "power state", "failed to set", "in use")):
+        return ("Another program is using the D435: close RealSense Viewer, other VisionICU windows "
+                "or camera apps. The camera is reset automatically after 3 failed attempts.")
+    if "resolve" in m or "couldn't resolve requests" in m:
+        return ("The requested streams are not available in the current USB mode: use a USB 3 port "
+                "(the D435 then reports USB 3.x).")
+    if "timeout" in m or "frame didn't arrive" in m or "no frames" in m:
+        return "The D435 stopped sending frames: re-seat the USB cable; it is reset automatically."
+    return "Check the USB 3 connection and that no other program is using the camera."
+
+
+def reset_d435() -> bool:
+    """Hardware-reset every attached RealSense (re-enumerates USB). True if one was reset."""
+    try:
+        import pyrealsense2 as rs
+        devices = list(rs.context().query_devices())
+        for d in devices:
+            d.hardware_reset()
+        if devices:
+            log.warning("Reset the D435 after repeated open failures; it re-appears in ~5 s.")
+        return bool(devices)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("D435 reset failed: %s", exc)
+        return False
+
 STREAM_FPS = 12.0
 PREVIEW_PERIOD_S = 1.0          # keep a 1 Hz preview even with no viewers (calibration, thumbnails)
 
@@ -295,6 +327,10 @@ class PatientSource:
         _, wall = self._latest_thermal()
         return wall > 0 and (time.time() - wall) < self.THERMAL_ONLINE_S
 
+    def thermal_link_detail(self) -> Optional[str]:
+        """Why the thermal camera is or is not delivering, in plain words (None: not known)."""
+        return None
+
     @staticmethod
     def _thermal_grid(frame: np.ndarray) -> dict:
         h, w = frame.shape[:2]
@@ -308,6 +344,7 @@ class PatientSource:
             trace = [(t, c) for (t, c) in self._breath if t >= time.time() - self.TRACE_S]
         online = wall > 0 and (time.time() - wall) < self.THERMAL_ONLINE_S
         base = {"online": online, "ts": wall or None, "roi": list(roi) if roi else None,
+                "link_detail": self.thermal_link_detail(),
                 "roi_source": src, "registration": self.thermal_registration_status(),
                 "trace": {"t": [t for t, _ in trace], "c": [round(c, 3) for _, c in trace]}}
         if frame is None or not online:
@@ -421,6 +458,9 @@ class CameraEngine(PatientSource):
         self._tracker = None
         self._roi_builder = None
         self._buf = None
+        self._thermal_stream = None                 # engine-owned; survives D435 restarts
+        self._thermal_note: Optional[str] = None    # why there is no thermal stream, if none
+        self._last_frame_wall = 0.0                 # time.time() of the last D435 frame
         self._frame_lock = threading.Lock()
         self._last_bundle: Optional[FrameBundle] = None
         self._last_people: List[PosePerson] = []
@@ -587,6 +627,10 @@ class CameraEngine(PatientSource):
             except Exception as exc:  # noqa: BLE001
                 log.info("No saved calibration to reuse (%s)", exc)
 
+        # The thermal camera is independent of the D435: started once here and kept for the
+        # whole session, so a D435 that fails to open (or drops out) never tears it down.
+        self._start_thermal()
+        failures = 0
         while not self._stop.is_set():
             try:
                 from src.capture.sync_buffer import SyncBuffer, load_camera_config
@@ -599,14 +643,21 @@ class CameraEngine(PatientSource):
                 continue
             try:
                 cfg = load_camera_config(str(self.config_dir / "camera.yaml"))
-                self._buf = SyncBuffer(cfg)
+                self._buf = SyncBuffer(cfg, thermal=self._thermal_stream)
                 self.pipeline.touch_status("starting", "Opening RealSense D435...")
                 self._buf.start()
+                failures = 0
             except Exception as exc:  # noqa: BLE001
+                failures += 1
+                detail = f"{type(exc).__name__}: {exc}"
+                hint = d435_hint(str(exc))
+                if failures in (1, 3) or failures % 12 == 0:
+                    log.error("Could not open the D435 (attempt %d): %s. %s", failures, detail, hint)
                 self.pipeline.touch_status("camera_offline",
-                                           f"Could not open the D435 ({type(exc).__name__}: {exc}). "
-                                           f"Retrying every 5 s.")
+                                           f"Could not open the D435 ({detail}). {hint} Retrying every 5 s.")
                 self._safe_stop_buf()
+                if failures % 3 == 0:
+                    reset_d435()                    # clears a stuck USB/firmware state
                 self._stop.wait(5.0)
                 continue
 
@@ -629,6 +680,53 @@ class CameraEngine(PatientSource):
     def stop(self) -> None:
         super().stop()
         self._safe_stop_buf()
+        ts, self._thermal_stream = self._thermal_stream, None
+        if ts is not None:
+            try:
+                ts.stop()
+            except Exception:  # noqa: BLE001
+                pass
+
+    def _start_thermal(self) -> None:
+        """Start the engine-owned thermal reader and a thread that shows its frames on the
+        dashboard whenever the D435 is not delivering (with the D435 running, frames are
+        published from the frame loop with the nostril region)."""
+        try:
+            from src.capture.sync_buffer import load_camera_config
+            from src.capture.thermal_stream import ThermalStream
+            th = (load_camera_config(str(self.config_dir / "camera.yaml")) or {}).get("waveshare_thermal") or {}
+            if not th.get("enabled", False):
+                self._thermal_note = "Thermal camera is turned off in config/camera.yaml (waveshare_thermal.enabled)."
+                return
+            self._thermal_stream = ThermalStream(th)
+            self._thermal_stream.start()
+        except Exception as exc:  # noqa: BLE001
+            log.error("Thermal camera not started: %s", exc)
+            self._thermal_note = f"Thermal camera could not start ({type(exc).__name__}: {exc})."
+            self._thermal_stream = None
+            return
+        threading.Thread(target=self._thermal_publish_loop, name=f"thermal-pub-{self.patient_id}",
+                         daemon=True).start()
+
+    def _thermal_publish_loop(self) -> None:
+        last_ts = None
+        while not self._stop.is_set():
+            stream = self._thermal_stream
+            if stream is None:
+                return
+            frame, ts = stream.get_latest_frame()
+            # while the D435 runs, the frame loop publishes thermal frames with the nostril region
+            d435_idle = time.time() - self._last_frame_wall > 1.0
+            if frame is not None and ts != last_ts and d435_idle:
+                last_ts = ts
+                self._publish_thermal(frame, None, time.time())
+            self._stop.wait(0.12)
+
+    def thermal_link_detail(self) -> Optional[str]:
+        stream = self._thermal_stream
+        if stream is None:
+            return self._thermal_note
+        return stream.link_detail()
 
     def _safe_stop_buf(self) -> None:
         buf, self._buf = self._buf, None
@@ -665,6 +763,7 @@ class CameraEngine(PatientSource):
             self._last_bundle = b
         h, w = rgb.shape[:2]
         now = time.time()
+        self._last_frame_wall = now
         new_thermal = thermal is not None and b.thermal_ts is not None \
             and b.thermal_ts != self._last_thermal_ts_seen
         if new_thermal:

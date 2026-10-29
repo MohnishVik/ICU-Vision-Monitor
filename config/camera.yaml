@@ -57,8 +57,8 @@ waveshare_thermal:
   retry_delay_s: 1.0           # first wait after a failed request; doubles up to max_backoff_s
   max_backoff_s: 5.0
   max_poll_hz: 10              # the sensor makes ~8 frames/s; faster polling only loads the ESP32
-  # Only `endpoint` is ever requested while monitoring. To find it on new firmware run
-  # scripts/scan_esp32.py once (it spaces its requests so the board does not run out of RAM).
+  # Only `endpoint` is ever requested while monitoring. scripts/scan_esp32.py checks it safely;
+  # only after new firmware use `--full` to probe other paths (can power the board off).
   display_colormap: COLORMAP_INFERNO
   # Homography to register thermal (62x80) -> RGB (480x640) space
   # Run scripts/calibrate_thermal.py once to compute and paste here

@@ -100,7 +100,7 @@ export interface SourceInfo { name: string; how: string; learned: boolean; color
 /** Every RR / HR source, in display order. Learned paths are dashed in charts. */
 export const SOURCES: Record<string, SourceInfo> = {
   'rr.fused':         { name: 'Fused', how: 'Inverse-variance blend of the fused paths', learned: false, color: 'var(--rr-line)' },
-  'rr.depth':         { name: 'Chest depth', how: 'D435 depth over the sternum, spectral peak', learned: false, color: 'var(--s1)' },
+  'rr.depth':         { name: 'Chest & abdomen depth', how: 'D435 depth over chest and abdomen, combined spectral peak', learned: false, color: 'var(--s1)' },
   'rr.thermal':       { name: 'Nostril thermal', how: 'ESP32 breath temperature, spectral peak', learned: false, color: 'var(--s2)' },
   'rr.cnn_lbrd':      { name: 'CNN · LBRD-IC', how: '1-D CNN on whole-frame green, trained on LBRD-IC', learned: true, color: 'var(--s3)', dash: '6 4' },
   'rr.cnn_d435':      { name: 'CNN · D435 fine-tune', how: '1-D CNN on chest depth, fine-tuned on your D435 clips', learned: true, color: 'var(--s4)', dash: '2 3' },

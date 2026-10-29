@@ -180,7 +180,7 @@ everything else in the last 20–30 s. What lowers it, and what to do:
 | Patient moving (turning, talking, settling) | Brief moves are bridged and the reading continues; after more than 4 s (breathing) or 3 s (heart rate) of movement, *Patient moving* while the window refills (20 s / 10 s) | Wait; nothing to adjust |
 | Two rhythms of similar strength (shallow breathing while talking or typing) | Lower signal bars; the reading counts less in fusion | Nothing to adjust; it recovers when breathing is regular |
 | Face too dark for heart rate | *Face too dark* | Diffuse light facing the patient (a lamp behind the camera, not overhead only); keep the face larger than ~120 px across (camera 1.0–1.5 m away) |
-| Chest hidden by blanket folds or arms | *Signal too weak* | Keep the sternum area in view |
+| Chest and abdomen both hidden by blanket folds or arms | *Signal too weak* | Keep the chest or belly in view (either one is enough) |
 
 Heart rate from colour depends most on light. Each heartbeat changes skin colour by well under
 1 %. When the face averages below about 80 / 255 even with exposure and gain at maximum, sensor
@@ -194,6 +194,24 @@ and brief movements are bridged instead of restarting the window. On the paced-b
 recording this gives a mean error of 0.87 br/min with 94 % of readings within ±2 br/min
 (quality score 29 % → 85 %, reading shown 77 % → 93 % of the time), and removed false readings
 caused by the patient settling into the chair.
+
+**Chest + abdomen.** The depth reading uses two surfaces: the chest box and the abdomen box below
+it (from the pose). Each gets its own window, movement bridging and dropout handling. The two
+spectra are each scaled to the same total power, weighted by how clean they are (peak-power
+fraction squared), and added together. The rate is the peak of the combined spectrum. Breathing is the
+one rhythm both surfaces share, so its peak adds up, while noise found on only one surface
+(a hand on the belly, blanket folds, depth speckle) does not. A belly breather whose chest barely
+moves is read from the abdomen; with no abdomen in view the reading is the chest alone, as before.
+Apnoea is flagged only when every measured surface goes still. On the paced recording with 3 mm
+of extra depth noise per surface, two surfaces gave MAE 0.84 br/min, 93 % within ±2, shown
+100 % of the time, against 1.20 br/min, 83 % and 96 % for the chest alone (sternum used as the
+second surface there; the recording predates the abdomen box). The sources table shows which
+surfaces counted each second.
+
+What is fused into the RR on screen: depth (chest + abdomen) and, once the thermal camera is
+aligned to read the nostrils, thermal. The two learned breathing CNNs are shown only. Tested on
+known rates, they return nearly the same value for every input (see *Weight checks*), so
+fusing them would pull correct readings toward their training mean.
 
 ---
 
@@ -346,9 +364,12 @@ models/
 1. Connect the D435 by USB 3, power the thermal camera and connect this PC's Wi-Fi to its
    `WSThermal` network (the D435 is on USB, so losing internet is fine; use Ethernet if other PCs
    must reach the dashboard). Check `waveshare_thermal.enabled: true` in `config/camera.yaml`.
-2. Optional checks: `python scripts/diagnose_cameras.py` shows both streams. Run
-   `python scripts/scan_esp32.py` only after flashing new firmware: it spaces its requests and
-   closes each connection so the ESP32 does not run out of memory.
+2. Optional checks: `python scripts/diagnose_cameras.py` shows both streams.
+   `python scripts/scan_esp32.py` fetches five frames from `/thermal/frame`, half a second
+   apart, and prints their temperatures. It is safe to run any time because it never touches
+   another path. `--full` also probes other paths. Use it only after flashing new firmware,
+   because requests to paths the firmware does not serve can exhaust the ESP32's memory and
+   power it off. Power-cycle the camera afterwards.
 3. Start the monitor: `python main.py`, then open http://127.0.0.1:8000.
 4. **Set up the chair** (every session): open the bed and click the four corners of the seat in
    any order. Drag a corner to adjust, then **Start monitoring**. The seat polygon decides who the
@@ -616,7 +637,7 @@ ICU-Vision-Monitor/
 | Script | What it does | Status |
 |---|---|---|
 | `scripts/diagnose_cameras.py` | Live D435 + thermal check before a session (`--d435-only`, `--thermal-only`) | Ready |
-| `scripts/scan_esp32.py` | Finds the thermal camera's active HTTP endpoint (`--ip 192.168.4.1`); closes each connection and waits 0.5 s between requests so the ESP32 is not overloaded | Ready |
+| `scripts/scan_esp32.py` | Safe check of the thermal camera: 5 frames from `/thermal/frame` only, decoded to °C (`--ip`, `--frames`). `--full` probes other paths, after new firmware only (can power the board off) | Ready |
 | `scripts/run_monitor.py` | Legacy single-window OpenCV monitor (`python main.py --hud`) | Ready |
 | `scripts/compare_sessions.py` | Score recorded sessions: coverage + MAE per estimator, grouped by condition (`--out report.md`) | Ready |
 | `scripts/eval_weights.py` | Loads every weight file as the monitor does and probes it with known answers (results in [Model files](#trained-weights-model-registry)); `--json` to save | Ready |
@@ -679,10 +700,10 @@ bash deploy/setup_jetson.sh          # swap, max performance mode, dependencies 
 | You see | Do this |
 |---|---|
 | "Camera not connected" with `No module named 'pyrealsense2'` | Install `pyrealsense2`, or run `python main.py --demo` to explore without hardware |
-| "Could not open the D435" | Use a USB 3 port and cable; close other apps using the camera; it retries every 5 s |
+| "Could not open the D435 (…)" | The message gives the camera's own error and what to do: *not detected* → USB 3 port and cable; *another program is using it* → close RealSense Viewer and other VisionICU windows. It retries every 5 s and resets the camera itself after 3 failed attempts. The error is also written to the terminal. The thermal camera keeps running meanwhile |
 | Pose tracking "Not available: Weights not found" | Put `yolov8n-pose.pt` in `models/public/` and make sure `ultralytics` is installed |
 | Fall detection "Not available: Weights missing" | Put `fall_gru_pseudo.pt` in `models/public/` |
-| "Thermal camera offline" | Power the ESP32 and join its `WSThermal` Wi-Fi. The monitor only ever requests `waveshare_thermal.endpoint` from `camera.yaml`, paced to 10 Hz with back-off, because bursts of requests to other paths crash the board (RAM). Run `python scripts/scan_esp32.py` only after new firmware: it spaces its requests and closes each connection. RR continues from depth alone |
+| "Thermal camera offline" | Power the ESP32 and join its `WSThermal` Wi-Fi. The monitor only ever requests `waveshare_thermal.endpoint` from `camera.yaml`, paced to 10 Hz with back-off, because bursts of requests to other paths crash the board (RAM). The thermal panel says why there are no frames, for example *No answer from … for 30 s (timed out)*. `python scripts/scan_esp32.py` checks the board safely. The thermal reader is started once per session and never restarted with the D435. RR continues from depth alone |
 | Thermal reading marked "Shown only" | Not aligned yet: it reads the warmest spot (usually the forehead), so it is kept out of the breathing rate. Align it from the bed page |
 | Breathing shows "Patient moving" | Only after more than 4 s of continuous movement; shorter shifts are bridged and the reading continues |
 | Pain card says "Learning this patient's calm face" | Normal for the first minute with the face in view. Press **Set calm baseline** when the patient is settled; a baseline learned during pain would hide it |

@@ -6,7 +6,10 @@ and are shown alongside (fused only when signal.yaml learned.fuse is true). Outp
 in src/fusion/inv_variance.py.
 
 Paths implemented here
-  depth    — chest ROI mean depth -> detrend -> smooth -> Welch PSD -> peak in band
+  depth    — chest and abdomen ROI mean depth, each -> high-pass -> smooth -> Welch PSD;
+             the two spectra are merged (each normalised, weighted by how clean it is)
+             and the rate read off the merged peak. A chest breather and a belly breather
+             both give a clear signal, and noise that only one surface has averages out.
              Works in complete darkness. Also runs the apnea detector.
   thermal  — nostril/mouth ROI mean temperature -> same DSP
              Skipped cleanly when FrameBundle.thermal is None or the thermal frame
@@ -96,6 +99,7 @@ class RRConfig:
     motion_max_hold_s: float   = 4.0       # bridge movements up to this long; restart after
     dropout_hold_s: float      = 1.0       # repeat the last sample through depth holes this long
     body_band_mm: Optional[float] = 150.0  # keep chest pixels within this of the median depth
+    regions: tuple = ("chest", "abdomen")  # depth surfaces whose spectra rr.depth combines
 
     @classmethod
     def from_dict(cls, cfg: dict) -> "RRConfig":
@@ -133,6 +137,8 @@ class RRConfig:
             motion_mm=float(d.get("motion_mm", 20.0)),
             motion_max_hold_s=float(d.get("motion_max_hold_s", 4.0)),
             body_band_mm=(None if d.get("body_band_mm", 150.0) is None else float(d.get("body_band_mm", 150.0))),
+            # the chest is always measured; the abdomen is added unless regions leaves it out
+            regions=("chest", "abdomen") if "abdomen" in d.get("regions", ["chest", "abdomen"]) else ("chest",),
         )
 
 
@@ -227,6 +233,17 @@ def _smooth(sig: np.ndarray, win_samples: int) -> np.ndarray:
 # Spectral estimate + quality score
 # ─────────────────────────────────────────────────────────────────────────────
 
+def _band_psd(sig: np.ndarray, fs: float, band_hz: tuple[float, float], nfft: int,
+              segment_s: float = 10.0) -> tuple[Optional[np.ndarray], Optional[np.ndarray]]:
+    """Welch PSD restricted to band_hz: (freqs, psd), or (None, None) when the band is empty."""
+    nperseg = min(len(sig), max(32, int(fs * segment_s)))
+    freqs, psd = scipy.signal.welch(sig, fs=fs, window="hann", nperseg=nperseg, nfft=nfft)
+    idx = np.where((freqs >= band_hz[0]) & (freqs <= band_hz[1]))[0]
+    if len(idx) < 3 or float(np.sum(psd[idx])) <= 0:
+        return None, None
+    return freqs[idx], psd[idx]
+
+
 def _spectral_rate_bpm(
     sig: np.ndarray,
     fs: float,
@@ -241,17 +258,15 @@ def _spectral_rate_bpm(
     after filtering. A 10 s segment holds under two breaths at 10 /min, which blurs the
     peak; breathing uses 20 s (signal.yaml rr.depth.segment_s).
     """
-    nperseg = min(len(sig), max(32, int(fs * segment_s)))
-    freqs, psd = scipy.signal.welch(
-        sig, fs=fs, window="hann", nperseg=nperseg, nfft=nfft
-    )
-
-    idx = np.where((freqs >= band_hz[0]) & (freqs <= band_hz[1]))[0]
-    if len(idx) < 3:
+    sub_freqs, sub_psd = _band_psd(sig, fs, band_hz, nfft, segment_s)
+    if sub_freqs is None:
         return None, 0.0, {}
+    return _peak_stats(sub_freqs, sub_psd, quality)
 
-    sub_freqs = freqs[idx]
-    sub_psd   = psd[idx]
+
+def _peak_stats(sub_freqs: np.ndarray, sub_psd: np.ndarray,
+                quality: _QualityCfg) -> tuple[Optional[float], float, dict]:
+    """Strongest peak of an in-band spectrum: (rate_bpm, peak_power_frac, debug)."""
     total_power = float(np.sum(sub_psd))
     if total_power <= 0:
         return None, 0.0, {}
@@ -359,6 +374,75 @@ def _fallback_depth_roi(depth: np.ndarray, roi_frac: dict) -> np.ndarray:
     return depth[y1:y2, x1:x2]
 
 
+class _DepthRegion:
+    """
+    One breathing surface seen by the depth camera (chest or abdomen): its own rolling
+    window, motion bridge and dropout handling, so a hand resting on the belly or a
+    blanket shadow over the chest only affects that region.
+    """
+
+    def __init__(self, name: str, cfg: RRConfig, fs: float):
+        self.name, self.cfg = name, cfg
+        self.path = _Path(cfg=cfg.depth, fs_nominal=fs, source=f"rr.depth.{name}")
+        self.motion = MotionGate(fs, abs_thresh=cfg.motion_mm)
+        self.bridge = MotionBridge(self.motion, mode="add", max_hold_s=cfg.motion_max_hold_s)
+        self.last_raw: Optional[float] = None
+        self.dropout_since: Optional[float] = None
+
+    def sample(self, crop: Optional[np.ndarray], now: float) -> bool:
+        """Add one frame. Returns True when the window was dropped (long dropout or long
+        movement), so the caller can reset state tied to it."""
+        mean_z = None if crop is None else _mean_from_depth_roi(
+            crop, self.cfg.min_valid_depth_units, self.cfg.min_valid_pixels, self.cfg.body_band_mm)
+        if mean_z is None:
+            # brief dropout (a few frames of depth holes): repeat the last raw sample. A long
+            # one (chest covered, out of view) must not become a flat line, which the apnoea
+            # detector would read as a breath-hold: drop the window and wait for signal.
+            if self.dropout_since is None:
+                self.dropout_since = now
+            if now - self.dropout_since > self.cfg.dropout_hold_s:
+                if self.path.sig:
+                    self.path.reset()
+                    self.bridge.reset()
+                    return True
+                return False
+            mean_z = self.last_raw
+            if mean_z is None:
+                return False
+        else:
+            self.dropout_since = None
+        self.last_raw = mean_z
+        items, restart = self.bridge.feed(mean_z, now)
+        if restart:                                    # moving for longer than motion_max_hold_s
+            self.path.reset()
+            return True
+        for t_item, value in items:                    # emitted ~0.5 s late (see MotionBridge)
+            self.path.append(value, t_item)
+        return False
+
+
+def _fuse_spectra(spectra: list[tuple[np.ndarray, np.ndarray, float]],
+                  q: _QualityCfg) -> tuple[np.ndarray, np.ndarray]:
+    """
+    Combine the in-band spectra of several regions into one.
+
+    Each spectrum is normalised to unit band power (a deep-breathing belly must not drown
+    a cleaner chest just by moving more millimetres) and weighted by its peak_power_frac
+    squared, so a clean region counts several times more than a noisy one. Breathing is
+    the one rhythm all regions share, so its peak adds up while each region's own noise
+    (blanket folds, a hand, depth speckle) does not. Regions below peak_power_frac_min
+    are left out unless none passes, then the cleanest one is used alone.
+    Spectra are interpolated onto the first (chest) frequency grid.
+    """
+    good = [s for s in spectra if s[2] >= q.peak_power_frac_min] or [max(spectra, key=lambda s: s[2])]
+    ref_f = good[0][0]
+    acc = np.zeros_like(ref_f, dtype=np.float64)
+    for f, p, frac in good:
+        p = np.interp(ref_f, f, p / float(np.sum(p)), left=0.0, right=0.0)
+        acc += (frac ** 2) * p
+    return ref_f, acc
+
+
 def _nostril_mean_c(thermal: np.ndarray) -> Optional[float]:
     """
     Mean temperature over the warmest patch inside the thermal frame.
@@ -387,13 +471,11 @@ class RRModule:
 
     def __init__(self, cfg: RRConfig, depth_fs: float = 30.0, thermal_fs: float = 8.0):
         self.cfg = cfg
-        self._depth   = _Path(cfg=cfg.depth,   fs_nominal=depth_fs,   source="rr.depth")
+        self._regions = {name: _DepthRegion(name, cfg, depth_fs) for name in cfg.regions}
+        self._chest = self._regions["chest"]
         self._thermal = _Path(cfg=cfg.thermal, fs_nominal=thermal_fs, source="rr.thermal")
         self._apnea_state = _ApneaState()
-        self._depth_motion = MotionGate(depth_fs, abs_thresh=cfg.motion_mm)
-        self._depth_bridge = MotionBridge(self._depth_motion, mode="add", max_hold_s=cfg.motion_max_hold_s)
-        self._last_depth_raw: Optional[float] = None
-        self._dropout_since: Optional[float] = None
+        self._depth_last_estimate = 0.0
         self._last_motion_report = 0.0
         self._last_thermal_ts: Optional[float] = None
         self._thermal_src: Optional[str] = None     # "nostril" | "warmest_patch"
@@ -407,17 +489,18 @@ class RRModule:
         self._sample_thermal(bundle, roi, now)
 
         out: dict[str, Measurement] = {}
-        if self._depth_motion.recent(now, self.cfg.depth.min_fill_s) and not self._depth.filled() \
+        filled = [r for r in self._regions.values() if r.path.filled()]
+        if self._chest.motion.recent(now, self.cfg.depth.min_fill_s) and not filled \
                 and now - self._last_motion_report >= self.cfg.depth.update_every_s:
             # refilling after movement: say so instead of going quiet
             self._last_motion_report = now
             out["rr.depth"] = Measurement(None, 0.0, time.time(), "rr.depth", 0.0,
                                           {"reason": "motion", "apnea": False})
-        if self._depth.ready(now):
-            m = self._estimate(self._depth, source="rr.depth", with_apnea=True)
+        if filled and now - self._depth_last_estimate >= self.cfg.depth.update_every_s:
+            m = self._estimate_depth(filled)
             if m is not None:
                 out[m.source] = m
-                self._depth.last_estimate_ts = now
+                self._depth_last_estimate = now
         if self._thermal.ready(now) and self._thermal.fs_nominal > 0:
             m = self._estimate(self._thermal, source="rr.thermal", with_apnea=False)
             if m is not None:
@@ -428,39 +511,19 @@ class RRModule:
     # ---- sampling ------------------------------------------------------------
 
     def _sample_depth(self, bundle: FrameBundle, roi: Optional[ROIBundle], now: float) -> None:
-        # Prefer the pose-based crop from the scene layer; fall back to a fixed box
+        # Prefer the pose-based crops from the scene layer. Without a pose the chest falls
+        # back to a fixed box; the abdomen has no safe fixed box (it could be the chair or
+        # a lap tray), so it simply sits out until a pose is found.
         if roi is not None and roi.chest_depth is not None and roi.chest_depth.size > 0:
-            crop = roi.chest_depth
+            chest = roi.chest_depth
         else:
-            crop = _fallback_depth_roi(bundle.depth, self.cfg.fallback_roi_frac)
-
-        mean_z = _mean_from_depth_roi(crop, self.cfg.min_valid_depth_units, self.cfg.min_valid_pixels,
-                                      self.cfg.body_band_mm)
-        if mean_z is None:
-            # brief dropout (a few frames of depth holes): repeat the last raw sample. A long
-            # one (chest covered, out of view) must not become a flat line, which the apnoea
-            # detector would read as a breath-hold: drop the window and wait for signal.
-            if self._dropout_since is None:
-                self._dropout_since = now
-            if now - self._dropout_since > self.cfg.dropout_hold_s:
-                if self._depth.sig:
-                    self._depth.reset()
-                    self._depth_bridge.reset()
-                    self._apnea_state = _ApneaState()
-                return
-            mean_z = self._last_depth_raw
-            if mean_z is None:
-                return
-        else:
-            self._dropout_since = None
-        self._last_depth_raw = mean_z
-        items, restart = self._depth_bridge.feed(mean_z, now)
-        if restart:                                    # moving for longer than motion_max_hold_s
-            self._depth.reset()
-            self._apnea_state = _ApneaState()
-            return
-        for t_item, value in items:                    # emitted ~0.5 s late (see MotionBridge)
-            self._depth.append(value, t_item)
+            chest = _fallback_depth_roi(bundle.depth, self.cfg.fallback_roi_frac)
+        if self._chest.sample(chest, now):
+            self._apnea_state = _ApneaState()          # the window the apnoea timer refers to is gone
+        abd = self._regions.get("abdomen")
+        if abd is not None:
+            crop = getattr(roi, "abdomen_depth", None) if roi is not None else None
+            abd.sample(crop if crop is not None and crop.size > 0 else None, now)
 
     def _sample_thermal(self, bundle: FrameBundle, roi: Optional[ROIBundle], now: float) -> None:
         if bundle.thermal is None or bundle.thermal_ts is None:
@@ -489,6 +552,60 @@ class RRModule:
         self._thermal.append(temp, bundle.thermal_ts)
 
     # ---- estimation ----------------------------------------------------------
+
+    def _estimate_depth(self, regions: list) -> Optional[Measurement]:
+        """
+        rr.depth from every region with a full window. Each region's trace is filtered and
+        turned into a spectrum exactly like the single-chest path; the spectra are merged by
+        _fuse_spectra and the rate, quality and second-peak check read off the merged one.
+        With the abdomen out of view this is the chest-only estimate, unchanged.
+        Apnoea needs every measured region to have gone still, so a hand resting on one
+        surface cannot fake a breath-hold.
+        """
+        t0 = time.perf_counter()
+        c, q = self.cfg.depth, self.cfg.quality
+        spectra, per = [], {}
+        apnea_trig, window_s, fs_out, last_ts = True, 0.0, None, 0.0
+        for r in regions:
+            sig, ts = r.path.snapshot()
+            fs = _effective_fs(ts, r.path.fs_nominal)
+            apnea_trig = apnea_trig and _is_apnea_now(sig, ts, fs, self.cfg.apnea)
+            x = _highpass(sig, fs, c.highpass_hz) if c.highpass_hz else _detrend(sig, c.detrend)
+            x = _smooth(x, int(c.smooth_s * fs))
+            f, p = _band_psd(x, fs, c.band_hz, c.nfft, c.segment_s)
+            window_s, last_ts = max(window_s, float(ts[-1] - ts[0])), max(last_ts, float(ts[-1]))
+            fs_out = fs if fs_out is None else fs_out
+            if f is None:
+                continue
+            rate_r, frac_r, _ = _peak_stats(f, p, q)
+            spectra.append((f, p, frac_r))
+            per[r.name] = {"rate_bpm": None if rate_r is None else round(rate_r, 2),
+                           "peak_power_frac": round(frac_r, 3)}
+        apnea_now, apnea_dur = self._apnea_state.update(apnea_trig, last_ts, self.cfg.apnea.min_duration_s)
+
+        rate_bpm, frac, dbg, used = None, 0.0, {}, []
+        if spectra:
+            f, p = _fuse_spectra(spectra, q)
+            rate_bpm, frac, dbg = _peak_stats(f, p, q)
+            used = [name for name, s in zip(per, spectra)
+                    if s[2] >= q.peak_power_frac_min] or [max(per, key=lambda n: per[n]["peak_power_frac"])]
+        sqi = _sqi_from_frac(frac, q)
+        second = dbg.get("second_peak_ratio")
+        if second is not None:              # two rhythms of similar strength: see _estimate
+            sqi *= float(np.clip((1.0 - second) / 0.5, 0.3, 1.0))
+
+        value: Optional[float] = rate_bpm
+        if rate_bpm is None or frac < q.peak_power_frac_min:
+            value = None
+        if apnea_now:
+            value, sqi = None, 1.0          # confident that NO breathing is occurring
+
+        meta = {"fs_hz": round(fs_out or 0.0, 3), "peak_power_frac": round(frac, 3),
+                "window_s": round(window_s, 2), **dbg,
+                "apnea": bool(apnea_now), "apnea_duration_s": round(apnea_dur, 2),
+                "regions": per, "regions_used": used}
+        return Measurement(value=value, sqi=float(np.clip(sqi, 0.0, 1.0)), ts=time.time(),
+                           source="rr.depth", latency_ms=(time.perf_counter() - t0) * 1000.0, meta=meta)
 
     def _estimate(self, path: _Path, source: str, with_apnea: bool) -> Optional[Measurement]:
         t0 = time.perf_counter()

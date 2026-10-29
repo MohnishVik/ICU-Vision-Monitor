@@ -1,106 +1,97 @@
 """
-scan_esp32.py — ESP32-S3 HTTP endpoint scanner
-Scans for active endpoints on the Waveshare thermal camera AP.
-Run this if you flash new firmware or the thermal stream stops responding.
+scan_esp32.py — checks the Waveshare ESP32-S3 thermal camera without crashing it
 
 Usage:
-    python scripts/scan_esp32.py
-    python scripts/scan_esp32.py --ip 192.168.4.1
+    python scripts/scan_esp32.py                 # safe: checks /thermal/frame only (default)
+    python scripts/scan_esp32.py --ip http://192.168.4.1
+    python scripts/scan_esp32.py --full          # after new firmware ONLY: probes other paths
 
-Confirmed active endpoint: /thermal/frame (returns 9920 bytes binary)
+Why the default touches one path only: requests to paths the firmware does not serve make the
+ESP32-S3 allocate error pages it cannot free fast enough; a handful in a row exhausts its RAM
+and the board browns out and powers off (the "scan powers the camera off" symptom). The monitor
+and test_waveshare_thermal.py only ever request /thermal/frame, which is why they run for hours.
 
-Gentle by design (as in Camera_Configurations/scan_esp32.py): every request closes its
-connection ("Connection: close") and the scanner pauses between requests, because back-to-back
-requests to unknown paths exhaust the ESP32-S3's RAM and the board powers off. The confirmed
-endpoint is tried first, so a healthy board answers before anything else is touched.
+So the default mode fetches /thermal/frame a few times, slowly, with "Connection: close",
+decodes the 9920-byte payload (62 x 80 int16, centi-degC) and reports the frame rate.
+
+--full probes the other paths with 2 s gaps and stops at the first path that does not answer
+(the board is then struggling); power-cycle the camera afterwards before running the monitor.
 """
 
 import argparse
-import requests
 import time
 
+import requests
 
-ENDPOINTS = [
-    "/thermal/frame",     # <-- confirmed working, tried first
-    "/", "/thermal", "/thermal/", "/thermal/raw",
-    "/raw", "/stream", "/index.html", "/debug",
-    "/thermal/debug", "/status", "/capture"
-]
-CLOSE = {"Connection": "close"}   # never keep a socket open on the ESP32 between requests
-GAP_S = 0.5                       # let the ESP32 free its buffers before the next request
+KNOWN = "/thermal/frame"            # what camera.yaml -> waveshare_thermal.endpoint uses
+OTHER_PATHS = ["/", "/thermal", "/thermal/raw", "/raw", "/stream", "/status", "/capture"]
+CLOSE = {"Connection": "close"}     # never keep a socket open on the ESP32 between requests
+EXPECTED_BYTES = 62 * 80 * 2
 
 
-def scan_esp32_endpoints(base_ip: str = "http://192.168.4.1", gap_s: float = GAP_S) -> list[str]:
-    print(f"[INFO] Scanning ESP32-S3 HTTP server at {base_ip}...")
-    print(f"[INFO] Make sure Windows is connected to 'WSThermal' AP\n")
+def check_frames(base_ip: str, n: int = 5, gap_s: float = 0.5) -> bool:
+    """Fetch the known endpoint n times, gap_s apart. True when every frame decodes."""
+    import numpy as np
+    url = f"{base_ip}{KNOWN}"
+    print(f"[INFO] Checking {url} ({n} frames, {gap_s:.1f} s apart). "
+          f"Windows must be on the 'WSThermal' Wi-Fi.\n")
+    ok, t0 = 0, time.monotonic()
+    for i in range(n):
+        try:
+            r = requests.get(url, timeout=2.0, headers=CLOSE)
+            raw = r.content
+            if r.status_code == 200 and len(raw) == EXPECTED_BYTES:
+                arr = np.frombuffer(raw, dtype=np.int16).reshape(62, 80).astype(np.float32) / 100.0
+                print(f"  [OK  ] frame {i + 1}: min {arr.min():.1f} C  max {arr.max():.1f} C  "
+                      f"mean {arr.mean():.1f} C")
+                ok += 1
+            else:
+                print(f"  [FAIL] frame {i + 1}: HTTP {r.status_code}, {len(raw)} bytes "
+                      f"(expected {EXPECTED_BYTES}) - firmware/sensor mismatch")
+        except requests.exceptions.RequestException as exc:
+            print(f"  [ERR ] frame {i + 1}: {type(exc).__name__} - board off, or not on WSThermal")
+        time.sleep(gap_s)
+    print(f"\n[SUMMARY] {ok}/{n} frames decoded in {time.monotonic() - t0:.1f} s.")
+    if ok == n:
+        print(f"  The monitor will work: camera.yaml -> waveshare_thermal.endpoint: \"{KNOWN}\"")
+    elif ok:
+        print("  Some requests failed: move the laptop closer to the camera or check its power supply.")
+    else:
+        print("  No frames: power-cycle the camera, reconnect to WSThermal, and run this again.")
+    return ok == n
 
+
+def full_scan(base_ip: str, gap_s: float = 2.0) -> list[str]:
+    """Probe other paths (only needed after flashing new firmware). Stops at the first path
+    that does not answer at all, because the board is then running out of memory."""
+    print("[WARN] --full sends requests to paths the firmware may not serve. This can power the "
+          "ESP32 off; power-cycle it afterwards.\n")
     active: list[str] = []
-
-    for path in ENDPOINTS:
+    for path in [KNOWN] + OTHER_PATHS:
         url = f"{base_ip}{path}"
         try:
-            response = requests.get(url, timeout=2.0, headers=CLOSE)
-            if response.status_code == 200:
-                content_len = len(response.content)
-                content_preview = response.content[:16].hex() if response.content else ""
-                print(f"  [200 OK ] {url}  ({content_len} bytes)  [{content_preview}...]")
+            r = requests.get(url, timeout=3.0, headers=CLOSE)
+            print(f"  [{r.status_code}] {url}  ({len(r.content)} bytes)")
+            if r.status_code == 200:
                 active.append(url)
-            elif response.status_code == 404:
-                print(f"  [404    ] {url}")
-            else:
-                print(f"  [{response.status_code}    ] {url}")
         except requests.exceptions.RequestException:
-            print(f"  [ERR    ] {url}  (connection failed)")
+            print(f"  [ERR] {url} did not answer - stopping so the board can recover.")
+            break
         time.sleep(gap_s)
-
-    print(f"\n[SUMMARY] {len(active)} working URL(s) found.")
-    if active:
-        print(f"  Use in camera.yaml → waveshare_thermal.endpoint")
-        for u in active:
-            print(f"    {u}")
-    else:
-        print("  CRITICAL: 0 working URLs. Check WiFi connection to WSThermal AP.")
-        print("  SPIFFS partition may have failed to mount on the ESP32.")
-
+    print(f"\n[SUMMARY] {len(active)} path(s) answered 200: " + (", ".join(active) or "none"))
     return active
 
 
-def check_frame_payload(url: str = "http://192.168.4.1/thermal/frame") -> None:
-    """Quick check: fetch one frame and verify the 9920-byte payload."""
-    import numpy as np
-    print(f"\n[INFO] Checking payload from {url} ...")
-    try:
-        r = requests.get(url, timeout=2.0, headers=CLOSE)
-        raw = r.content
-        print(f"  Status   : {r.status_code}")
-        print(f"  Bytes    : {len(raw)}  (expected 9920 = 62*80*2)")
-        if len(raw) == 9920:
-            arr = np.frombuffer(raw, dtype=np.int16).reshape(62, 80).astype(np.float32) / 100.0
-            print(f"  Min temp : {arr.min():.2f} C")
-            print(f"  Max temp : {arr.max():.2f} C")
-            print(f"  Mean temp: {arr.mean():.2f} C")
-            print("  [PASS] Payload decodes correctly.")
-        else:
-            print("  [FAIL] Unexpected byte count — firmware/sensor mismatch.")
-    except Exception as e:
-        print(f"  [ERR] {e}")
-
-
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Scan ESP32-S3 endpoints")
+    parser = argparse.ArgumentParser(description="Check the ESP32-S3 thermal camera")
     parser.add_argument("--ip", default="http://192.168.4.1",
-                        help="ESP32 base IP (default: http://192.168.4.1)")
-    parser.add_argument("--check-payload", action="store_true",
-                        help="Also decode one thermal frame and print stats")
+                        help="ESP32 base URL (default: http://192.168.4.1)")
+    parser.add_argument("--frames", type=int, default=5, help="frames to fetch in the safe check")
+    parser.add_argument("--full", action="store_true",
+                        help="also probe other paths (after new firmware only; may power the board off)")
     args = parser.parse_args()
 
-    active = scan_esp32_endpoints(args.ip)
-
-    if args.check_payload and active:
-        time.sleep(GAP_S)
-        # Try the confirmed endpoint first
-        target = f"{args.ip}/thermal/frame"
-        if target in active:
-            check_frame_payload(target)
-        else:
-            check_frame_payload(active[0])
+    if args.full:
+        full_scan(args.ip.rstrip("/"))
+    else:
+        check_frames(args.ip.rstrip("/"), n=max(1, args.frames))

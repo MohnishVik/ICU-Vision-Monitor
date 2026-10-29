@@ -5,7 +5,12 @@ D435 produces a bundle every ~33 ms (30 fps).
 The thermal camera produces a frame every ~125 ms (about 8 fps), polled in a background thread.
 
 Rule: every D435 bundle gets the NEWEST thermal frame, provided that frame is at most
-camera.yaml -> sync.thermal_max_age_ms old (250 ms = two thermal frames). Otherwise thermal=None.
+camera.yaml -> sync.thermal_max_age_ms old. Otherwise thermal=None.
+
+The thermal reader can be handed in already running (the camera engine owns it for the
+whole session). Then SyncBuffer never starts or stops it, so a D435 that fails to open or
+drops out does not tear down the ESP32 connection: restarting the thermal poller every few
+seconds made the thermal camera look disconnected and needlessly loaded the board.
 bundle.thermal_ts says when that thermal frame arrived, so the same frame showing up in
 several bundles can be recognised and skipped by the thermal RR path.
 
@@ -33,10 +38,12 @@ class SyncBuffer:
                 process(bundle)
     """
 
-    def __init__(self, camera_cfg: dict):
+    def __init__(self, camera_cfg: dict, thermal: "ThermalStream | None" = None):
         """
         Args:
             camera_cfg: the full parsed camera.yaml dict
+            thermal: a ThermalStream owned (started and stopped) by the caller; when None,
+                     SyncBuffer creates and owns one itself if thermal is enabled
         """
         self.d435_cfg    = camera_cfg["d435"]
         self.thermal_cfg = camera_cfg["waveshare_thermal"]
@@ -46,8 +53,12 @@ class SyncBuffer:
         self.max_thermal_age_s = float(sync_cfg.get("thermal_max_age_ms", 250)) / 1000.0
 
         self._d435    = D435Stream(self.d435_cfg)
-        self._thermal = ThermalStream(self.thermal_cfg) \
-            if self.thermal_cfg.get("enabled", False) else None
+        self._owns_thermal = thermal is None
+        if thermal is not None:
+            self._thermal = thermal
+        else:
+            self._thermal = ThermalStream(self.thermal_cfg) \
+                if self.thermal_cfg.get("enabled", False) else None
 
         self._thermal_online_logged = False
 
@@ -56,7 +67,7 @@ class SyncBuffer:
     def start(self) -> None:
         """Start both hardware streams."""
         # Thermal first: it runs in a background thread and does not block
-        if self._thermal:
+        if self._thermal and self._owns_thermal:
             self._thermal.start()
             time.sleep(0.5)   # give the ESP32 a moment to answer
 
@@ -76,7 +87,7 @@ class SyncBuffer:
             self._stop_thermal()
 
     def _stop_thermal(self) -> None:
-        if self._thermal:
+        if self._thermal and self._owns_thermal:
             self._thermal.stop()
 
     def __enter__(self) -> "SyncBuffer":

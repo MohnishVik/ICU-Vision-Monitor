@@ -22,6 +22,11 @@ function Row({ src, snap, vital }: { src: string; snap: PatientSnapshot; vital: 
   const unf = (m?.meta?.raw_output ?? m?.meta?.rate_unfiltered) as number | null | undefined;
   const name = src === 'rr.thermal' && m?.meta?.roi === 'warmest_patch' ? 'Thermal · warmest spot' : info?.name ?? src;
   const unit = vital === 'rr' ? 'br/min' : 'bpm';
+  // rr.depth: which body surfaces (chest, abdomen) were clean enough to count this second
+  const used = src === 'rr.depth' ? (m?.meta?.regions_used as string[] | undefined) : undefined;
+  const how = used?.length
+    ? `D435 depth, ${used.map((r) => (r === 'chest' ? 'chest' : 'abdomen')).join(' + ')} spectra combined`
+    : info?.how;
   return (
     <tr>
       <td>
@@ -35,7 +40,7 @@ function Row({ src, snap, vital }: { src: string; snap: PatientSnapshot; vital: 
             </Tip>
           )}
         </div>
-        <span className="t-micro text-mute block pl-[30px]">{info?.how}</span>
+        <span className="t-micro text-mute block pl-[30px]">{how}</span>
       </td>
       <td className="num">
         {m?.value != null ? (

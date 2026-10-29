@@ -15,6 +15,7 @@ rr:
     min_valid_depth_units: 5
     min_valid_pixels: 30
     body_band_mm: 150            # average only chest pixels within this of the median (drops wall/chair)
+    regions: [chest, abdomen]    # spectra combined for rr.depth; [chest] = chest only
     motion_mm: 20                # half-second depth step that means the patient moved
     motion_max_hold_s: 4         # shorter movements are bridged (reading continues); longer restart the window
     window_s: 30

@@ -45,6 +45,7 @@ export default function ThermalPanel({ snap }: { snap: PatientSnapshot }) {
           <ThermometerSnowflake className="h-5 w-5 text-mute shrink-0 mt-0.5" aria-hidden />
           <div className="flex flex-col gap-1">
             <p className="t-body text-ink">{th ? 'Thermal camera offline.' : 'Connecting to the thermal camera.'}</p>
+            {th?.link_detail && <p className="t-label text-ink max-w-[58ch]">{th.link_detail}</p>}
             <p className="t-label text-ink2 max-w-[58ch]">
               Respiratory rate continues from the depth camera alone. Check that the ESP32 is powered
               and on the same Wi-Fi as this computer (it answers at 192.168.4.1).

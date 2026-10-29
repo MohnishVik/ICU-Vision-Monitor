@@ -152,6 +152,7 @@ export interface ThermalRegistrationStatus {
 export interface ThermalPayload extends Partial<ThermalGrid> {
   online: boolean;
   ts: number | null;
+  link_detail?: string | null;   // why the thermal camera is (not) delivering, plain words
   roi: [number, number, number, number] | null;
   roi_source: 'nostril' | 'warmest_patch';
   registration: ThermalRegistrationStatus;

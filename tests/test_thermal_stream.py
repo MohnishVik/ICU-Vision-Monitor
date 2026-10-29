@@ -117,3 +117,59 @@ def test_stop_during_a_request_does_not_crash_the_thread():
 def test_wrong_size_payload_is_not_a_frame():
     s = ThermalStream(CFG, session_factory=FakeBoard().factory)
     assert s._decode_frame(b"\x00" * 100) is None
+
+
+# ── the thermal camera is independent of the D435 ─────────────────────────────────
+
+def test_a_d435_that_fails_to_open_does_not_stop_a_borrowed_thermal_stream():
+    import pytest
+    from src.capture.sync_buffer import SyncBuffer, load_camera_config
+    board = FakeBoard()
+    s = _run(board, 0.2)
+    try:
+        buf = SyncBuffer(load_camera_config("config/camera.yaml"), thermal=s)
+
+        def no_camera():
+            raise RuntimeError("No device connected")
+        buf._d435.start = no_camera
+        with pytest.raises(RuntimeError):
+            buf.start()
+        buf._d435.stop = lambda: None
+        buf.stop()
+        n = len(board.urls)
+        time.sleep(0.3)
+        assert len(board.urls) > n and s.is_online()   # still polling after the D435 gave up
+    finally:
+        s.stop()
+
+
+def test_engine_shows_thermal_while_the_d435_is_down():
+    import types
+    from src.serving.engine import CameraEngine
+    board = FakeBoard()
+    s = _run(board, 0.2)
+    published = []
+    eng = types.SimpleNamespace(_stop=threading.Event(), _thermal_stream=s, _last_frame_wall=0.0,
+                                _publish_thermal=lambda f, roi, now: published.append(roi))
+    th = threading.Thread(target=CameraEngine._thermal_publish_loop, args=(eng,), daemon=True)
+    th.start()
+    try:
+        time.sleep(0.5)
+        assert published and all(r is None for r in published)
+        eng._last_frame_wall = time.time() + 60          # D435 running: the frame loop publishes
+        n = len(published)
+        time.sleep(0.4)
+        assert len(published) == n
+    finally:
+        eng._stop.set()
+        th.join(timeout=2)
+        s.stop()
+
+
+def test_d435_errors_get_plain_advice():
+    from src.serving.engine import d435_hint
+    assert "Another program" in d435_hint("xioctl(VIDIOC_S_FMT) failed: Device or resource busy")
+    assert "Another program" in d435_hint("failed to set power state")
+    assert "not detected" in d435_hint("No device connected")
+    assert "USB 3" in d435_hint("Couldn't resolve requests")
+    assert d435_hint("something new")
