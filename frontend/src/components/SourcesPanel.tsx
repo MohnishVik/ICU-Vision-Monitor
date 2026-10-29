@@ -1,7 +1,9 @@
 // SourcesPanel.tsx — every estimator behind HR and RR, side by side.
 // "Fused" sources make up the number on screen; "shown only" sources (the learned models,
 // unless signal.yaml learned.fuse is on) are displayed for comparison and never alarm.
+import { useState } from 'react';
 import { FlaskConical, Layers } from 'lucide-react';
+import { api } from '../lib/api';
 import { SOURCES } from '../lib/format';
 import { sourceReasonKey } from '../lib/glossary';
 import type { PatientSnapshot, VitalKey } from '../types';
@@ -13,11 +15,16 @@ const ORDER: Record<VitalKey, string[]> = {
   hr: ['hr.pos', 'hr.efficientphys'],
 };
 
-function Row({ src, snap, vital }: { src: string; snap: PatientSnapshot; vital: VitalKey }) {
+function Row({ src, snap, vital, onToggle, busy }: {
+  src: string; snap: PatientSnapshot; vital: VitalKey; onToggle: (src: string, on: boolean) => void; busy: boolean;
+}) {
   const v = snap.vitals?.[vital];
   const m = v?.sources?.[src];
   const info = SOURCES[src];
-  const fused = m ? m.role === 'fused' : !info?.learned || !!v?.learned_fused;
+  const included = v?.fusion_included ? v.fusion_included.includes(src) : !info?.learned;
+  const fused = m ? m.role === 'fused' : included;
+  // switched on, but this source cannot count right now (thermal before alignment)
+  const waiting = included && !fused;
   const reason = (m?.meta?.reason as string | null | undefined) ?? null;
   const unf = (m?.meta?.raw_output ?? m?.meta?.rate_unfiltered) as number | null | undefined;
   const name = src === 'rr.thermal' && m?.meta?.roi === 'warmest_patch' ? 'Thermal · warmest spot' : info?.name ?? src;
@@ -57,13 +64,18 @@ function Row({ src, snap, vital }: { src: string; snap: PatientSnapshot; vital: 
       </td>
       <td>{m ? <Quality sqi={m.sqi} compact /> : <span className="t-micro text-mute">—</span>}</td>
       <td>
-        <Tip term={fused ? 'fused' : 'shownOnly'} className={`chip ${fused ? '' : 'border-dashed'}`}
-             content={fused && info?.learned ? 'As a learned model it is a secondary path: dropped for any second in which it '
+        <Tip term={fused ? 'fused' : 'shownOnly'}
+             content={(included ? 'Click to stop using it in the number on screen. ' : 'Click to blend it into the number on screen. ')
+               + (fused && info?.learned ? 'As a learned model it is a secondary path: dropped for any second in which it '
                + 'disagrees with the signal-processing reading.'
-               : !fused && src === 'rr.thermal' ? 'Not used in the breathing rate yet: without alignment the thermal camera '
-               + 'reads the warmest spot (usually the forehead), which does not move with breathing. Use "Align thermal" on '
-               + 'this page; once it reads the nostrils it joins the fused value.' : undefined}>
-          {fused ? <><Layers aria-hidden />Fused</> : 'Shown only'}
+               : waiting && src === 'rr.thermal' ? 'Switched on, but waiting: without alignment the thermal camera reads the '
+               + 'warmest spot (usually the forehead), which does not move with breathing. Once it reads the nostrils it joins.'
+               : 'The choice is saved for this bed.')}>
+          <button type="button" aria-pressed={included} disabled={busy}
+                  onClick={() => onToggle(src, !included)}
+                  className={`chip cursor-pointer hover:border-ink2 disabled:opacity-60 ${included ? '' : 'border-dashed'}`}>
+            {fused ? <><Layers aria-hidden />Fused</> : waiting ? 'Fused · waiting' : 'Shown only'}
+          </button>
         </Tip>
       </td>
       <td className="num t-micro text-mute">{m ? <Tip term="compute">{m.latency_ms.toFixed(0)} ms</Tip> : ''}</td>
@@ -73,6 +85,13 @@ function Row({ src, snap, vital }: { src: string; snap: PatientSnapshot; vital: 
 
 export default function SourcesPanel({ snap }: { snap: PatientSnapshot }) {
   const learnedFused = !!(snap.vitals?.rr?.learned_fused || snap.vitals?.hr?.learned_fused);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const toggle = async (src: string, on: boolean) => {
+    setBusy(true);
+    setErr(null);
+    try { await api.setFusion(snap.patient_id, src, on); } catch (e) { setErr((e as Error).message); } finally { setBusy(false); }
+  };
   return (
     <section className="card card-pad flex flex-col gap-3 min-w-0" aria-labelledby="src-h">
       <div className="flex flex-col gap-1">
@@ -86,7 +105,9 @@ export default function SourcesPanel({ snap }: { snap: PatientSnapshot }) {
           {learnedFused
             ? ' Learned models marked Fused count only while they agree with the signal-processing reading; otherwise they are left out for that second.'
             : ' Learned models (dashed) run alongside for comparison and never drive alarms until you validate them on the Compare page.'}
+          {' '}Click a Role to switch it; the choice is saved for this bed.
         </p>
+        {err && <p role="alert" className="t-label text-red">{err}</p>}
       </div>
       <div className="overflow-x-auto">
         {(['rr', 'hr'] as const).map((k) => (
@@ -100,7 +121,7 @@ export default function SourcesPanel({ snap }: { snap: PatientSnapshot }) {
                 <th className="num"><Tip term="compute" className="tip-term">Compute</Tip></th>
               </tr>
             </thead>
-            <tbody>{ORDER[k].map((s) => <Row key={s} src={s} snap={snap} vital={k} />)}</tbody>
+            <tbody>{ORDER[k].map((s) => <Row key={s} src={s} snap={snap} vital={k} onToggle={toggle} busy={busy} />)}</tbody>
           </table>
         ))}
       </div>

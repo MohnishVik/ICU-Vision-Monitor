@@ -490,6 +490,12 @@ class RRModule:
 
         out: dict[str, Measurement] = {}
         filled = [r for r in self._regions.values() if r.path.filled()]
+        if roi is not None and roi.chest_depth is None and not filled \
+                and now - self._last_motion_report >= self.cfg.depth.update_every_s:
+            self._last_motion_report = now          # nobody tracked: say so once a second
+            out["rr.depth"] = Measurement(None, 0.0, time.time(), "rr.depth", 0.0,
+                                          {"reason": "no_patient", "apnea": False})
+            return out
         if self._chest.motion.recent(now, self.cfg.depth.min_fill_s) and not filled \
                 and now - self._last_motion_report >= self.cfg.depth.update_every_s:
             # refilling after movement: say so instead of going quiet
@@ -511,13 +517,16 @@ class RRModule:
     # ---- sampling ------------------------------------------------------------
 
     def _sample_depth(self, bundle: FrameBundle, roi: Optional[ROIBundle], now: float) -> None:
-        # Prefer the pose-based crops from the scene layer. Without a pose the chest falls
-        # back to a fixed box; the abdomen has no safe fixed box (it could be the chair or
-        # a lap tray), so it simply sits out until a pose is found.
-        if roi is not None and roi.chest_depth is not None and roi.chest_depth.size > 0:
+        # Pose-based crops from the scene layer. roi=None means there is no pose system at
+        # all, and only then is a fixed chest box used. When the scene layer runs but finds
+        # nobody (crops are None), nothing is measured: a fixed box over an empty chair
+        # reads fans, curtains and depth noise as "breathing". The abdomen has no fixed box.
+        if roi is None:
+            chest = _fallback_depth_roi(bundle.depth, self.cfg.fallback_roi_frac)
+        elif roi.chest_depth is not None and roi.chest_depth.size > 0:
             chest = roi.chest_depth
         else:
-            chest = _fallback_depth_roi(bundle.depth, self.cfg.fallback_roi_frac)
+            chest = None
         if self._chest.sample(chest, now):
             self._apnea_state = _ApneaState()          # the window the apnoea timer refers to is gone
         abd = self._regions.get("abdomen")

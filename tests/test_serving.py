@@ -256,3 +256,18 @@ def test_thermal_without_hardware_is_explicit():
         assert p["online"] is False and "data" not in p
         assert client.post("/api/patients/bed-9/thermal/snapshot").status_code == 409
         assert client.get("/api/patients/bed-9/thermal/overlay.jpg").status_code == 409
+
+
+def test_fusion_switch_from_the_bed_page(demo_client):
+    st = demo_client.get("/api/patients/bed-4/fusion").json()
+    rr = {r["source"]: r for r in st["rr"]}
+    assert rr["rr.depth"]["fused"] and not rr["rr.cnn_d435"]["fused"] and rr["rr.cnn_d435"]["learned"]
+    on = demo_client.post("/api/patients/bed-4/fusion", json={"source": "rr.cnn_d435", "fused": True}).json()
+    assert {r["source"]: r["fused"] for r in on["rr"]}["rr.cnn_d435"]
+    assert _wait(lambda: "rr.cnn_d435" in demo_client.get("/api/patients/bed-4/vitals").json()["vitals"]["rr"]
+                 ["fusion_included"])
+    # the last signal-processing source of a vital cannot be switched off
+    assert demo_client.post("/api/patients/bed-4/fusion", json={"source": "hr.pos", "fused": False}).status_code == 409
+    assert demo_client.post("/api/patients/bed-4/fusion", json={"source": "nope", "fused": True}).status_code == 404
+    back = demo_client.post("/api/patients/bed-4/fusion", json={"source": "rr.cnn_d435", "fused": None}).json()
+    assert back["overrides"] == {}

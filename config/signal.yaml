@@ -70,6 +70,8 @@ hr:
     low_light_luma: 60           # face darker than this (0-255) -> "Face too dark" when rejected
     bandpass_order: 2
     psd: { window: hann, nfft: 16384 }
+    segment_s: 20                # one 20 s spectrum: finer frequency resolution than 10 s segments
+    resample_hz: 30              # even time grid before POS (frames arrive unevenly)
     fallback_roi_frac:
       x: [0.25, 0.75]
       y: [0.08, 0.50]
@@ -78,6 +80,12 @@ hr:
     peak_power_frac_min: 0.25    # TUNE
     peak_power_frac_good: 0.50   # TUNE
     peak_half_width_hz: 0.05
+
+  steady:                        # accept a weaker peak that holds still (noise wanders, a pulse does not)
+    frac_min: 0.15               # paced recording: 9 % -> 64 % shown, estimates spread 2.9 bpm
+    count: 6                     # this many 1 s estimates in a row...
+    tol_bpm: 4.0                 # ...all within +-4 bpm of each other
+    sqi: 0.30                    # reported quality: counts in fusion, with low weight
 
 # ─────────────────────── Thoraco-Abdominal Asynchrony ───────────────────────
 taa:

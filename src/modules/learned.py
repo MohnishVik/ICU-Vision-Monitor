@@ -294,8 +294,17 @@ class LearnedRRModule:
     def sources(self) -> Tuple[str, ...]:
         return tuple(self._paths)
 
+    def reset(self) -> None:
+        for source, (net, series, detrend) in self._paths.items():
+            self._paths[source] = (net, _Series(series.net), detrend)
+
     def process(self, bundle: FrameBundle, roi: Optional[ROIBundle] = None) -> Dict[str, Measurement]:
         now = bundle.ts_mono
+        if roi is not None and roi.chest_depth is None:
+            # pose runs but nobody is tracked: no window may span an empty chair
+            if any(s.v for _, s, _ in self._paths.values()):
+                self.reset()
+            return {}
         if "rr.cnn_lbrd" in self._paths:
             self._paths["rr.cnn_lbrd"][1].add(float(np.mean(bundle.rgb[:, :, 1])), now)
         if "rr.cnn_d435" in self._paths:
@@ -366,6 +375,9 @@ class LearnedHRModule:
     @property
     def buffered_frames(self) -> int:
         return len(self._frames)
+
+    def reset(self) -> None:
+        self._reset()
 
     def _reset(self) -> None:
         self._gen += 1                    # results of an in-flight chunk are dropped

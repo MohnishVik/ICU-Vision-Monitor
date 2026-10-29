@@ -79,6 +79,9 @@ export const api = {
     request<SessionStatus>(`/api/patients/${enc(id)}/session/event`,
                            { method: 'POST', body: JSON.stringify({ kind, value, note }) }),
   sessionEventKinds: () => request<{ kinds: string[] }>('/api/session-event-kinds'),
+  setFusion: (id: string, source: string, fused: boolean | null) =>
+    request<unknown>(`/api/patients/${enc(id)}/fusion`,
+                     { method: 'POST', body: JSON.stringify({ source, fused }) }),
   painBaseline: (id: string) =>
     request<{ baseline_state: string }>(`/api/patients/${enc(id)}/pain/baseline`, { method: 'POST' }),
   stopSession: (id: string) => request<SessionStatus>(`/api/patients/${enc(id)}/session`, { method: 'DELETE' }),

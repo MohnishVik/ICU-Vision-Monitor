@@ -60,7 +60,7 @@ def test_lbrd_input_matches_the_training_notebook():
     green = np.round(green)          # frames are uint8
     out = {}
     for i, g in enumerate(green):
-        out = mod.process(_bundle(i / 25.0, green=g), _roi()) or out
+        out = mod.process(_bundle(i / 25.0, green=g), None) or out
     m = out["rr.cnn_lbrd"]
     x = torch.tensor(_zscore(green[-250:].astype(np.float32)), dtype=torch.float32)[None, None]
     with torch.no_grad():
@@ -90,7 +90,7 @@ def test_rr_paths_wait_for_a_full_window_then_update_each_second():
     times = []
     for i in range(int(14 * 30)):
         ts = i / 30.0
-        out = mod.process(_bundle(ts, green=100 + 5 * np.sin(ts), depth=1000 + 3 * np.sin(ts)), _roi())
+        out = mod.process(_bundle(ts, green=100 + 5 * np.sin(ts), depth=1000 + 3 * np.sin(ts)), None)
         if "rr.cnn_lbrd" in out:
             times.append(ts)
     assert times and times[0] >= 10.0 - 1e-6
@@ -101,7 +101,7 @@ def test_flat_input_reports_none_with_reason():
     mod = LearnedRRModule(LearnedConfig(device="cpu"))
     out = {}
     for i in range(330):
-        out = mod.process(_bundle(i / 30.0, green=90, depth=1000), _roi()) or out
+        out = mod.process(_bundle(i / 30.0, green=90, depth=1000), None) or out
     for src in ("rr.cnn_lbrd", "rr.cnn_d435"):
         assert out[src].value is None and out[src].meta["reason"] == "flat_signal"
 

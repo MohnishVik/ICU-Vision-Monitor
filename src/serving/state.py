@@ -148,8 +148,8 @@ class VitalsPipeline:
         sig = signal_cfg or {}
         self.fused_learned = learned_fuse_sources(sig, self.RR_LEARNED + self.HR_LEARNED)
         self.learned_fused = bool(self.fused_learned)
-        self.RR_SOURCES = self.RR_BASE + tuple(s for s in self.RR_LEARNED if s in self.fused_learned)
-        self.HR_SOURCES = self.HR_BASE + tuple(s for s in self.HR_LEARNED if s in self.fused_learned)
+        self.fusion_overrides: Dict[str, bool] = {}     # set from the bed page (set_fusion)
+        self._apply_fusion()
         self.patient_id, self.label, self.mode, self.simulated = patient_id, label, mode, simulated
         self.rr_fuse = FusionConfig(
             sqi_min=float(((sig.get("rr") or {}).get("quality") or {}).get("peak_power_frac_min", 0.30)),
@@ -326,6 +326,46 @@ class VitalsPipeline:
             return None
         return m
 
+    # ---- which sources make up the number on screen ---------------------------
+    def fusion_default(self, src: str) -> bool:
+        """signal.yaml decides: signal-processing paths fuse, learned ones if listed in learned.fuse."""
+        return src in self.RR_BASE + self.HR_BASE or src in self.fused_learned
+
+    def _apply_fusion(self) -> None:
+        on = lambda s: self.fusion_overrides.get(s, self.fusion_default(s))  # noqa: E731
+        self.RR_SOURCES = tuple(s for s in self.RR_BASE + self.RR_LEARNED if on(s))
+        self.HR_SOURCES = tuple(s for s in self.HR_BASE + self.HR_LEARNED if on(s))
+        self.learned_fused = bool(set(self.RR_SOURCES + self.HR_SOURCES) & set(self.RR_LEARNED + self.HR_LEARNED))
+
+    def set_fusion(self, src: str, fused: Optional[bool]) -> None:
+        """Include (True) or exclude (False) one source from its vital's fused value; None
+        returns it to the signal.yaml default. Each vital must keep one signal-processing
+        source: learned models are secondary and never supply a vital alone."""
+        if src not in self.ALL_SOURCES:
+            raise KeyError(src)
+        before = dict(self.fusion_overrides)
+        if fused is None or fused == self.fusion_default(src):
+            self.fusion_overrides.pop(src, None)
+        else:
+            self.fusion_overrides[src] = bool(fused)
+        self._apply_fusion()
+        for srcs, base, name in ((self.RR_SOURCES, self.RR_BASE, "breathing"),
+                                 (self.HR_SOURCES, self.HR_BASE, "heart rate")):
+            if not set(srcs) & set(base):
+                self.fusion_overrides = before
+                self._apply_fusion()
+                raise ValueError(f"Keep at least one signal-processing source fused for {name}; "
+                                 "learned models only add to it.")
+
+    def fusion_status(self) -> dict:
+        def row(s, fused_set):
+            return {"source": s, "fused": s in fused_set, "default": self.fusion_default(s),
+                    "learned": s in self.RR_LEARNED + self.HR_LEARNED,
+                    "note": ("Joins only while aligned to the nostrils" if s == "rr.thermal" else None)}
+        return {"rr": [row(s, self.RR_SOURCES) for s in self.RR_BASE + self.RR_LEARNED],
+                "hr": [row(s, self.HR_SOURCES) for s in self.HR_BASE + self.HR_LEARNED],
+                "overrides": dict(self.fusion_overrides)}
+
     @staticmethod
     def _may_fuse(src: str, m: Optional[Measurement]) -> bool:
         """
@@ -361,6 +401,7 @@ class VitalsPipeline:
                         for m in [self._fresh(s, now)]
                         if (d := measurement_dict(m)) is not None},
             "learned_fused": bool(fused_set & set(self.RR_LEARNED + self.HR_LEARNED)),
+            "fusion_included": sorted(fused_set),        # switched on (bed page), may still wait on alignment
             **(extra or {}),
         }
 

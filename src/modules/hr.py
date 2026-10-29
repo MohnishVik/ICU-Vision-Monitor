@@ -62,6 +62,19 @@ class _POSCfg:
     fallback_roi_frac: dict = field(default_factory=lambda: {
         "x": [0.25, 0.75], "y": [0.08, 0.50]
     })
+    segment_s: float    = 10.0          # Welch segment; 20 s = one finer-resolution spectrum
+    resample_hz: float  = 30.0          # put samples on an even grid before POS (0 = off)
+
+
+@dataclass
+class _SteadyCfg:
+    """Accept a weaker peak when it has stayed put: `count` estimates in a row with
+    peak_power_frac >= frac_min, all within +-tol_bpm of each other. Noise wanders from
+    window to window; a pulse does not."""
+    frac_min: float = 0.15
+    count: int      = 6
+    tol_bpm: float  = 4.0
+    sqi: float      = 0.30              # quality reported for such a reading (low fusion weight)
 
 
 @dataclass
@@ -79,12 +92,16 @@ class HRConfig:
     motion_rel: float = 0.05            # half-second skin-brightness step that counts as movement
     motion_max_hold_s: float = 3.0      # bridge movements up to this long; restart after
     low_light_luma: float = 60.0        # face darker than this -> "low_light" when rejected
+    steady: Optional[_SteadyCfg] = None  # None: only the peak_power_frac gate
 
     @classmethod
     def from_dict(cls, cfg: dict) -> "HRConfig":
         hr = cfg["hr"]
         p = hr["pos"]
+        st = hr.get("steady")
         return cls(
+            steady=None if not st else _SteadyCfg(**{k: st[k] for k in ("frac_min", "count", "tol_bpm", "sqi")
+                                                    if k in st}),
             reported_range_bpm=tuple(hr["reported_range_bpm"]),
             pos=_POSCfg(
                 inner_window_s=float(p["inner_window_s"]),
@@ -97,6 +114,8 @@ class HRConfig:
                 fallback_roi_frac=p.get("fallback_roi_frac", {
                     "x": [0.25, 0.75], "y": [0.08, 0.50]
                 }),
+                segment_s=float(p.get("segment_s", 10.0)),
+                resample_hz=float(p.get("resample_hz", 30.0)),
             ),
             quality=_QualityCfg(**{k: hr["quality"][k] for k in
                                    ("peak_power_frac_min", "peak_power_frac_good",
@@ -189,11 +208,25 @@ def _pos_pulse_wave(rgb_trace: np.ndarray, fs: float, inner_window_s: float) -> 
 # Spectral estimate + quality score (same shape as rr.py)
 # ─────────────────────────────────────────────────────────────────────────────
 
+def _resample_uniform(rgb: np.ndarray, ts: np.ndarray, fs: float) -> tuple[np.ndarray, np.ndarray]:
+    """
+    Linear interpolation of a (3, T) trace onto an even time grid.
+    Frames reach the modules at uneven intervals (pose inference and the browser stream
+    take 30-200 ms per frame), but POS and the spectrum treat sample n as time n/fs. That
+    mismatch smears the pulse peak across neighbouring frequencies; on the paced recording
+    re-gridding cut the spread of consecutive HR estimates from 12.8 to 4.2 bpm.
+    """
+    grid = np.arange(ts[0], ts[-1], 1.0 / fs)
+    if len(grid) < 4:
+        return rgb, ts
+    return np.vstack([np.interp(grid, ts, c) for c in rgb]).astype(np.float32), grid
+
+
 def _spectral_rate_bpm(
     sig: np.ndarray, fs: float, band_hz: tuple[float, float],
-    quality: _QualityCfg, nfft: int,
+    quality: _QualityCfg, nfft: int, segment_s: float = 10.0,
 ) -> tuple[Optional[float], float, dict]:
-    nperseg = min(len(sig), max(32, int(fs * 10)))
+    nperseg = min(len(sig), max(32, int(fs * segment_s)))
     freqs, psd = scipy.signal.welch(sig, fs=fs, window="hann", nperseg=nperseg, nfft=nfft)
     idx = np.where((freqs >= band_hz[0]) & (freqs <= band_hz[1]))[0]
     if len(idx) < 3:
@@ -277,6 +310,18 @@ class HRModule:
         self._bridge = MotionBridge(self._motion, mode="mul", max_hold_s=cfg.motion_max_hold_s, trigger=_luma)
         self._last_rgb_raw: Optional[np.ndarray] = None
         self._last_motion_report = 0.0
+        n = cfg.steady.count if cfg.steady else 1
+        self._recent: Deque[Optional[float]] = deque(maxlen=n)   # last estimates (None = too weak)
+        self._face_lost_since: Optional[float] = None
+
+    DROPOUT_HOLD_S = 1.0                # repeat the last colour through face dropouts this long
+
+    def reset(self) -> None:
+        """Drop all signal (patient left, or a new patient): windows refill from scratch."""
+        self._buf = _POSBuffer(cfg=self.cfg.pos, fs_nominal=self._fs)
+        self._bridge.reset()
+        self._last_rgb_raw = None
+        self._recent.clear()
 
     def process(self, bundle: FrameBundle, roi: Optional[ROIBundle] = None) -> dict:
         out = self._process(bundle, roi)
@@ -291,21 +336,40 @@ class HRModule:
         return out
 
     def _process(self, bundle: FrameBundle, roi: Optional[ROIBundle] = None) -> dict:
-        # 1. Pick the face crop
-        if roi is not None and roi.face_roi is not None and roi.face_roi.size > 0:
+        # 1. Pick the face crop. roi=None means no pose system: then a fixed box is used.
+        # With pose running but no face found, nothing is measured (a fixed box over an
+        # empty chair turns wall colour noise into a "pulse").
+        now = bundle.ts_mono
+        if roi is None:
+            face = _fallback_face_roi(bundle.rgb, self.cfg.pos.fallback_roi_frac)
+        elif roi.face_roi is not None and roi.face_roi.size > 0:
             face = roi.face_roi
         else:
-            face = _fallback_face_roi(bundle.rgb, self.cfg.pos.fallback_roi_frac)
+            face = None
 
         # 2. Mean skin RGB -> buffer
-        rgb_mean = _mean_skin_rgb(face)
+        rgb_mean = _mean_skin_rgb(face) if face is not None else None
         if rgb_mean is None:
+            if self._face_lost_since is None:
+                self._face_lost_since = now
+            if now - self._face_lost_since > self.DROPOUT_HOLD_S:
+                # face gone for longer than a blink of the pose model: start over, and say why
+                if self._buf.ts:
+                    self.reset()
+                    self._face_lost_since = now
+                if now - self._last_motion_report >= self.cfg.pos.update_every_s:
+                    self._last_motion_report = now
+                    return {"hr.pos": Measurement(None, 0.0, time.time(), "hr.pos", 0.0, {"reason": "no_face"})}
+                return {}
             rgb_mean = self._last_rgb_raw                # brief ROI dropout: repeat the last sample
+        else:
+            self._face_lost_since = None
         if rgb_mean is not None:
             self._last_rgb_raw = rgb_mean
             items, restart = self._bridge.feed(rgb_mean, bundle.ts_mono)
             if restart:                                  # moving longer than motion_max_hold_s
                 self._buf = _POSBuffer(cfg=self.cfg.pos, fs_nominal=self._fs)
+                self._recent.clear()
                 return {}
             for t_item, value in items:                  # emitted ~0.5 s late (see MotionBridge)
                 self._buf.append(np.asarray(value, dtype=np.float32), t_item)
@@ -323,7 +387,11 @@ class HRModule:
     def _estimate(self) -> Optional[Measurement]:
         t0 = time.perf_counter()
         rgb, ts = self._buf.snapshot()
-        fs = _effective_fs(ts, self._buf.fs_nominal)
+        fs_in = _effective_fs(ts, self._buf.fs_nominal)
+        fs = fs_in
+        if self.cfg.pos.resample_hz > 0:
+            rgb, ts = _resample_uniform(rgb, ts, self.cfg.pos.resample_hz)
+            fs = self.cfg.pos.resample_hz
 
         # Build the POS pulse wave
         pulse = _pos_pulse_wave(rgb, fs, self.cfg.pos.inner_window_s)
@@ -338,13 +406,23 @@ class HRModule:
         filtered = scipy.signal.filtfilt(b, a, scipy.signal.detrend(pulse))
 
         rate_bpm, frac, dbg = _spectral_rate_bpm(
-            filtered, fs, self.cfg.pos.band_hz, self.cfg.quality, self.cfg.pos.nfft
+            filtered, fs, self.cfg.pos.band_hz, self.cfg.quality, self.cfg.pos.nfft, self.cfg.pos.segment_s
         )
         sqi   = _sqi_from_frac(frac, self.cfg.quality)
         value = rate_bpm if (rate_bpm is not None and frac >= self.cfg.quality.peak_power_frac_min) else None
+        st = self.cfg.steady
+        if st is not None:
+            self._recent.append(rate_bpm if rate_bpm is not None and frac >= st.frac_min else None)
+            recent = list(self._recent)
+            if value is None and len(recent) == st.count and all(r is not None for r in recent) \
+                    and max(recent) - min(recent) <= 2 * st.tol_bpm:
+                value, sqi = rate_bpm, max(sqi, st.sqi)
+                dbg["accepted"] = "steady"          # weak peak, but the same rate for count seconds
         face_luma = float(np.mean(0.299 * rgb[0] + 0.587 * rgb[1] + 0.114 * rgb[2]))
         if value is None:
-            dbg["reason"] = "low_light" if face_luma < self.cfg.low_light_luma else "no_valid_input"
+            # "weak_pulse": the face is lit well enough but no rhythm stands out (moving,
+            # talking, or skin too dim for the camera); "low_light": more light is the fix
+            dbg["reason"] = "low_light" if face_luma < self.cfg.low_light_luma else "weak_pulse"
 
         return Measurement(
             value=value,
@@ -353,7 +431,7 @@ class HRModule:
             source="hr.pos",
             latency_ms=(time.perf_counter() - t0) * 1000.0,
             meta={
-                "fs_hz": round(fs, 3),
+                "fs_hz": round(fs_in, 3),
                 "peak_power_frac": round(frac, 3),
                 "window_s": round(ts[-1] - ts[0], 2),
                 "face_luma": round(face_luma, 1),

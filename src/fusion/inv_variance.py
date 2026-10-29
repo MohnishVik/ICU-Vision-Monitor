@@ -79,7 +79,8 @@ def fuse(measurements: Iterable[Optional[Measurement]], source: str,
     if not used:
         # pass the most actionable cause through ("Patient moving" beats "Signal too weak")
         causes = {m.meta.get("reason") for m in candidates if isinstance(m.meta, dict)}
-        reason = next((r for r in ("motion", "low_light") if r in causes), "no_valid_input")
+        reason = next((r for r in ("no_patient", "no_face", "motion", "low_light", "weak_pulse") if r in causes),
+                      "no_valid_input")
         return Measurement(None, 0.0, ts, source, (time.perf_counter() - t0) * 1e3,
                            {**base_meta, "reason": reason})
 

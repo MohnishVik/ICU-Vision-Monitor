@@ -72,6 +72,9 @@ export function vitalUnavailableText(v: Pick<Vital, 'reason' | 'stale' | 'value'
     case 'no_valid_input': return 'Signal too weak';
     case 'motion': return 'Patient moving';
     case 'low_light': return 'Face too dark';
+    case 'no_patient': return 'No patient in view';
+    case 'no_face': return 'Face not visible';
+    case 'weak_pulse': return 'Pulse too faint';
     default: return v.stale ? 'No recent reading' : 'Waiting for data';
   }
 }

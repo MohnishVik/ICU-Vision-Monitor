@@ -120,7 +120,13 @@ flowchart LR
    nostril regions; each region is smoothed so keypoint jitter does not move it.
 3. **Modules.** Each vital-sign module turns its region into a `Measurement`
    (`value`, `sqi`, `source`, `latency_ms`, `meta`). `value = None` means "cannot measure right now".
-4. **Fusion.** Estimates of the same vital are combined by inverse-variance weighting; low-quality
+   When pose tracking finds nobody, no vital sign is measured (*No patient in view*). Fixed boxes
+   are used only when there is no pose model at all. Measured on an empty chair, they turned
+   camera noise into 128 "bpm" and 7.7 "br/min".
+4. **Fusion.** Estimates of the same vital are combined by inverse-variance weighting, not a
+   simple average. Each path's quality score (0–1) becomes an expected error σ, from 0.5 at
+   quality 1.0 up to 6 at the lowest quality accepted, and each path is weighted by 1/σ². At
+   quality 1.0 versus 0.30 that is a 144 : 1 weight (breathing). Low-quality
    paths are dropped, and paths that disagree produce no number rather than an average. Thermal RR
    is fused only once the thermal camera is aligned to the nostrils. A Kalman
    filter applies physiological rate-of-change limits, trends are computed over 5/15/60/240 min,
@@ -185,6 +191,23 @@ everything else in the last 20–30 s. What lowers it, and what to do:
 Heart rate from colour depends most on light. Each heartbeat changes skin colour by well under
 1 %. When the face averages below about 80 / 255 even with exposure and gain at maximum, sensor
 noise is larger than that change, and the reading is withheld rather than guessed.
+
+Heart-rate processing:
+- **30 frames per second.** Pose detection runs on its own thread, so each camera frame gives one
+  evenly timed colour sample. Inline, pose held the loop to 8–17 fps.
+- **Even time grid.** Samples are put on an even 30 Hz grid before POS. Uneven frame timing had
+  smeared the pulse peak.
+- **One 20 s spectrum.** This gives finer frequency resolution than 10 s segments.
+- **Steady rule.** A weaker pulse peak (≥ 15 % of band power, below the usual 25 %) is accepted
+  when 6 estimates in a row agree within ±4 bpm. It is shown with quality 0.30, so it carries low
+  fusion weight. Noise wanders from second to second; a pulse does not.
+
+On the paced recording the reading was shown 43 % of the time (0 % before), at 65.8 bpm with
+estimates spread ±2.2 bpm. On a recording with talking and movement it was shown 18.5 % of the
+time. These figures have no oximeter reference, so validate them with a pulse oximeter on the
+Compare page before relying on them. If heart rate says *Pulse too faint*, add even light on the
+face (a lamp behind the camera) and keep the face large in the picture. The thermal camera does
+not measure heart rate: at 8 frames/s and 80 × 62 pixels it cannot see the pulse.
 
 Breathing processing (measured on the D435 with paced breathing; see `config/signal.yaml`):
 posture drift slower than 4.8 /min is removed with a high-pass filter before the spectrum, the
@@ -486,8 +509,13 @@ Suggested protocol: paced breathing at 6, 10, 15, 20 and 30 br/min (2 min each),
 counted free breathing, oximeter readings every 30–60 s, repeated in bright and dim light,
 sitting still and talking, thermal on and off. The first 30 s of a session and 20 s after each
 reference change are not scored (`--warmup`, `--settle`), because the estimator windows are
-still filling. If a learned model beats the signal-processing paths across conditions, add it to
-the `learned.fuse` list in `config/signal.yaml`.
+still filling. If a learned model beats the signal-processing paths across conditions, switch it
+to *Fused* in the bed page's *Estimators, side by side* table. Click the Role chip; the choice is
+saved per bed in `config/sessions/fusion_<bed>.json`. To change the default for every bed, use the
+`learned.fuse` list in `config/signal.yaml`. Each vital must keep at least one signal-processing
+estimator fused, because learned models are secondary: they only add to a reading and are
+dropped in any second they disagree with it. Thermal switched on shows *Fused · waiting* until it
+is aligned to the nostrils.
 
 Sessions are saved as numbers only (`data/sessions/<bed>_<time>_<label>/`: `meta.json`,
 `estimates.csv`, `references.csv`, `events.csv`, and `frames.csv` when training capture is on); no
@@ -593,6 +621,8 @@ All REST endpoints are under `/api` (interactive docs at `/docs` while the serve
 | POST | `/patients/{id}/session/event` | Mark an event `{kind, value?, note}` (fall, chair_exit, pain_score, …) |
 | GET | `/session-event-kinds` | The event kinds accepted |
 | POST | `/patients/{id}/pain/baseline` | Relearn the patient's calm pain-expression baseline |
+| GET | `/patients/{id}/fusion` | Which estimators are fused for RR and HR, with the defaults |
+| POST | `/patients/{id}/fusion` | `{"source": "rr.cnn_d435", "fused": true\|false\|null}`: switch one estimator (null = default); saved per bed |
 | DELETE | `/patients/{id}/session` | Stop recording |
 | GET | `/sessions` | Recorded sessions, newest first |
 | GET | `/sessions/{sid}/report` | Coverage + MAE per source (`?warmup_s=&settle_s=`) |

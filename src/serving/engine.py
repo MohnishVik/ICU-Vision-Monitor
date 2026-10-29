@@ -25,6 +25,7 @@ missing):
 from __future__ import annotations
 
 import importlib
+import json
 import logging
 import math
 import random
@@ -165,6 +166,31 @@ class PatientSource:
         self._breath: deque = deque(maxlen=600)
         self._snapshots: "OrderedDict[str, dict]" = OrderedDict()
         self._session_lock = threading.Lock()   # API requests run concurrently (double-click)
+        self._load_fusion()
+
+    # fusion choices (bed page "Fused / Shown only" switch), saved per bed for real cameras
+    def _fusion_path(self) -> Path:
+        return self.config_dir / "sessions" / f"fusion_{self.patient_id}.json"
+
+    def _load_fusion(self) -> None:
+        if self.pipeline.simulated or not self._fusion_path().exists():
+            return
+        try:
+            saved = json.loads(self._fusion_path().read_text(encoding="utf-8"))
+            for src, on in (saved.get("overrides") or {}).items():
+                self.pipeline.set_fusion(src, bool(on))
+        except Exception as exc:  # noqa: BLE001 - a bad file must not stop monitoring
+            log.warning("Ignoring saved fusion choices (%s): %s", self._fusion_path(), exc)
+
+    def set_fusion(self, source: str, fused: Optional[bool]) -> dict:
+        self.pipeline.set_fusion(source, fused)
+        if not self.pipeline.simulated:
+            p = self._fusion_path()
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text(json.dumps({"overrides": self.pipeline.fusion_overrides}, indent=1), encoding="utf-8")
+        log.info("Fusion for %s: %s -> %s", self.patient_id, source,
+                 "default" if fused is None else ("fused" if fused else "shown only"))
+        return self.pipeline.fusion_status()
 
     # recording sessions (numbers only; see src/serving/session_log.py)
     def session_status(self) -> dict:
@@ -460,6 +486,12 @@ class CameraEngine(PatientSource):
         self._buf = None
         self._thermal_stream = None                 # engine-owned; survives D435 restarts
         self._thermal_note: Optional[str] = None    # why there is no thermal stream, if none
+        self._pose_lock = threading.Lock()
+        self._pose_wake = threading.Event()
+        self._pose_frame: Optional[np.ndarray] = None
+        self._pose_result: tuple = ([], 0.0)        # (people, time.monotonic() when inferred)
+        self._pose_thread: Optional[threading.Thread] = None
+        self._pose_stale = False
         self._last_frame_wall = 0.0                 # time.time() of the last D435 frame
         self._frame_lock = threading.Lock()
         self._last_bundle: Optional[FrameBundle] = None
@@ -752,6 +784,40 @@ class CameraEngine(PatientSource):
                 self._set_mod("pose", "unavailable", f"Disabled after repeated errors: {exc}")
             return []
 
+    # Pose runs on its own thread. On a CPU it takes ~40 ms (more with the dashboard open),
+    # and inline it held the whole frame loop to 8-17 fps: heart rate then had few, unevenly
+    # spaced colour samples. Now every camera frame is sampled at 30 fps and uses the newest
+    # skeleton (at most one inference old; the ROI boxes are smoothed anyway).
+    POSE_MAX_AGE_S = 0.5            # older than this: treat as "no pose" (and stream no frame)
+
+    def _submit_pose(self, rgb: np.ndarray) -> tuple[List[PosePerson], float]:
+        """Hand the newest frame to the pose thread; return its latest result and that
+        result's age in seconds (inf before the first one)."""
+        if self._pose is None:
+            return [], 0.0
+        with self._pose_lock:
+            self._pose_frame = rgb
+            people, done = self._pose_result
+        self._pose_wake.set()
+        if self._pose_thread is None or not self._pose_thread.is_alive():
+            self._pose_thread = threading.Thread(target=self._pose_loop, name=f"pose-{self.patient_id}",
+                                                 daemon=True)
+            self._pose_thread.start()
+        return people, (time.monotonic() - done) if done else float("inf")
+
+    def _pose_loop(self) -> None:
+        while not self._stop.is_set() and self._pose is not None:
+            if not self._pose_wake.wait(0.5):
+                continue
+            self._pose_wake.clear()
+            with self._pose_lock:
+                frame, self._pose_frame = self._pose_frame, None
+            if frame is None:
+                continue
+            people = self._infer_pose(frame)
+            with self._pose_lock:
+                self._pose_result = (people, time.monotonic())
+
     def _on_frame(self, bundle: FrameBundle) -> None:
         t0 = time.perf_counter()
         rgb = np.ascontiguousarray(bundle.rgb).copy()        # SDK buffers are recycled
@@ -768,7 +834,10 @@ class CameraEngine(PatientSource):
             and b.thermal_ts != self._last_thermal_ts_seen
         if new_thermal:
             self._last_thermal_ts_seen = b.thermal_ts
-        people = self._infer_pose(rgb)
+        people, pose_age = self._submit_pose(rgb)
+        if pose_age > self.POSE_MAX_AGE_S:
+            people = []
+        self._pose_stale = self._pose is not None and pose_age > self.POSE_MAX_AGE_S
         self._last_people = people
         redaction = ("disabled" if not self.stream_video
                      else ("faces" if self._pose is not None else "unavailable"))
@@ -799,7 +868,10 @@ class CameraEngine(PatientSource):
         raw: Dict[str, Measurement] = {}
         for name, mod in self._mods.items():
             try:
-                out = mod.process(b, roi)
+                # Vital-sign modules measure only a tracked patient. Without a pose model they get
+                # roi=None and fall back to fixed boxes (the only option then, shown as degraded).
+                no_pose = self._pose is None and name in ("rr", "hr", "taa", "rr_learned", "hr_learned")
+                out = mod.process(b, None if no_pose else roi)
                 if out:
                     raw.update(out)
                 st = self.pipeline.modules.get(name, {})
@@ -852,6 +924,8 @@ class CameraEngine(PatientSource):
     def _maybe_encode(self, rgb: np.ndarray, people: List[PosePerson], now: float) -> None:
         if not self.stream_video or not self._want_frame(now):
             return
+        if self._pose_stale:
+            return          # no fresh skeleton to place the face blur on: send nothing rather than a face
         frame = self.guard.deidentify_many(rgb, people) if people else rgb
         self._publish_jpeg(_encode_jpeg(frame))
 
@@ -861,7 +935,7 @@ class CameraEngine(PatientSource):
             return data
         with self._frame_lock:
             b = self._last_bundle
-        if b is None:
+        if b is None or self._pose_stale:
             return None
         people = self._last_people
         return _encode_jpeg(self.guard.deidentify_many(b.rgb, people) if people else b.rgb)

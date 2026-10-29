@@ -231,6 +231,11 @@ class TAAModule:
             return {}
 
         now = bundle.ts_mono
+        if roi is not None and roi.chest_depth is None:
+            # pose runs but nobody is tracked: fixed boxes would compare chair and wall
+            if self._chest.sig or self._abdomen.sig:
+                self.reset()
+            return {}
         self._sample(bundle, roi, now)
 
         if not (self._chest.ready() and self._abdomen.ready()):

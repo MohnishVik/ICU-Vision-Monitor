@@ -115,6 +115,28 @@ export const GLOSSARY = g({
     body: 'Every method’s signal quality is below its minimum, for example when the face is turned away, '
       + 'the chest is covered or still, or the patient is moving.',
   },
+  reason_no_patient: {
+    title: 'No patient in view',
+    body: 'Pose tracking finds nobody in the chair, so breathing and heart rate are not measured. '
+      + 'Measuring an empty chair would turn fans, curtains and camera noise into plausible-looking numbers.',
+  },
+  reason_no_face: {
+    title: 'Face not visible',
+    body: 'Heart rate is read from the colour of the face, which is not visible right now. It restarts '
+      + '(about 10 s) once the face is back in view.',
+  },
+  reason_weak_pulse: {
+    title: 'Pulse too faint',
+    body: 'The face is visible but no heartbeat rhythm stands out from the colour noise. More even light on the '
+      + 'face and a still head help.',
+  },
+  src_weak_pulse: {
+    title: 'Pulse too faint',
+    body: 'The face is lit, but no heartbeat rhythm stands out from the colour noise. A heartbeat changes '
+      + 'skin colour by well under 1 %. More even light on the face (a lamp behind the camera), a still head '
+      + 'and the face filling more of the picture all help. A steady but faint rhythm is accepted after 6 s '
+      + 'at the same rate, with a low quality score.',
+  },
   reason_motion: {
     title: 'Patient moving',
     body: 'The patient moved, so the analysis window restarted and is refilling. A number returns once '

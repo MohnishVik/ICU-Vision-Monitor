@@ -32,6 +32,7 @@ export interface Vital {
   subscore: number | null;    // NEWS2 sub-score
   sources: Record<string, SourceReading>;
   learned_fused: boolean;
+  fusion_included?: string[];  // sources switched on for fusion (bed page switch / signal.yaml)
   apnea?: boolean;
 }
 

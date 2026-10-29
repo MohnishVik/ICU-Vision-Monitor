@@ -93,6 +93,11 @@ class EventBody(BaseModel):
 _SID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,120}$")
 
 
+class FusionBody(BaseModel):
+    source: str = Field(..., min_length=3, max_length=40)
+    fused: Optional[bool] = None       # None = back to the signal.yaml default
+
+
 class AlignmentBody(BaseModel):
     pairs: List[PointPair] = Field(..., min_length=1, max_length=64)
 
@@ -146,6 +151,22 @@ def build_api_router(manager: EngineManager) -> APIRouter:
             return src.start_session(body.label, body.condition, body.reference.model_dump(), body.notes,
                                      capture=body.capture)
         except RuntimeError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from None
+
+    @r.get("/patients/{patient_id}/fusion")
+    def fusion_get(patient_id: str) -> dict:
+        """Which estimators make up the RR and HR on screen, and the signal.yaml defaults."""
+        return _source(manager, patient_id).pipeline.fusion_status()
+
+    @r.post("/patients/{patient_id}/fusion")
+    def fusion_set(patient_id: str, body: FusionBody) -> dict:
+        """Include or exclude one estimator from the fused value (saved per bed)."""
+        src = _source(manager, patient_id)
+        try:
+            return src.set_fusion(body.source, body.fused)
+        except KeyError:
+            raise HTTPException(status_code=404, detail=f"Unknown estimator '{body.source}'") from None
+        except ValueError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from None
 
     @r.post("/patients/{patient_id}/pain/baseline")
