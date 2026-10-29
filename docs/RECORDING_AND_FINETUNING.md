@@ -183,6 +183,18 @@ General rules for every session:
   **Label format:** `S07_dev_paced12_bright` or `P03_icu_rest`. **No names** in label or notes.
 - The first 30 s and 20 s after each reference change are not scored, so hold each block
   ≥ 2 min.
+
+**Naming convention** (label = `<subject>_<site>_<block>_<light>`, optional `_r2` for a repeat):
+
+| Part | Values | Notes |
+|---|---|---|
+| subject | `S01`–`S99` volunteers, `P01`–`P99` patients | Letters then digits, then `_`. Training reads the subject from this, so one person keeps one code for life |
+| site | `cabin`, `dev`, `icu`, `imcu` | Where it was recorded |
+| block | `rest`, `paced06`, `paced10`, `paced15`, `paced20`, `paced30`, `hold`, `talk`, `exercise`, `recline`, `taa`, `thermoff`, `fall` | Two-digit paced rates so files sort in order |
+| light | `bright`, `dim` | Light at the time the monitor was started |
+
+Examples: `S01_cabin_paced15_bright`, `S03_cabin_rest_dim`, `S05_cabin_fall_bright_r2`.
+Keep the code-to-name list on paper only; names never go in labels or notes.
 - Press **Log reference** every time the truth changes (new metronome rate, new oximeter value).
 - One session per block keeps the Compare page readable.
 
