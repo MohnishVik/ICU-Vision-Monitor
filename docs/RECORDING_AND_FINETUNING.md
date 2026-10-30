@@ -155,7 +155,7 @@ pain is identifiable data and needs explicit consent for video.
 | `training/eval.py` | Scores any weights on held-out people; for breathing also scores the signal-processing reading (`rr.depth`, fused `rr`) over the same seconds with MAE **and** coverage. |
 
 Subject codes come from the session label: everything before the first underscore
-(`S07_dev_paced12_bright` → `S07`). Use the same code for every session of one person.
+(`S07_cabin_paced15_bright` → `S07`). Use the same code for every session of one person.
 
 ---
 
@@ -180,7 +180,7 @@ Never put the same person in both training and testing.
 
 General rules for every session:
 - **Record & compare** page → choose the bed → *Condition*, *Label*, reference RR/HR, notes.
-  **Label format:** `S07_dev_paced12_bright` or `P03_icu_rest`. **No names** in label or notes.
+  **Label format:** `S07_cabin_paced15_bright` or `P03_icu_rest`. **No names** in label or notes.
 - The first 30 s and 20 s after each reference change are not scored, so hold each block
   ≥ 2 min.
 
